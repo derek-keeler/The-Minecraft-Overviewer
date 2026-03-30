@@ -249,7 +249,6 @@ class CustomBuildExt(build_ext):
                 e.extra_compile_args.append("-Wno-unused-variable") # quell some annoying warnings
                 e.extra_compile_args.append("-Wno-unused-function") # quell some annoying warnings
                 e.extra_compile_args.append("-Wdeclaration-after-statement")
-                e.extra_compile_args.append("-Werror=declaration-after-statement")
                 e.extra_compile_args.append("-O3")
                 e.extra_compile_args.append("-std=gnu99")
 
