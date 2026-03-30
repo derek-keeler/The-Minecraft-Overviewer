@@ -15,14 +15,12 @@
 #    You should have received a copy of the GNU General Public License along
 #    with the Overviewer.  If not, see <http://www.gnu.org/licenses/>.
 
-from __future__ import print_function
-
 import platform
 import sys
 
 # quick version check
-if sys.version_info[0] == 2 or (sys.version_info[0] == 3 and sys.version_info[1] < 4):
-    print("Sorry, the Overviewer requires at least Python 3.4 to run.")
+if sys.version_info < (3, 11):
+    print("Sorry, the Overviewer requires at least Python 3.11 to run.")
     sys.exit(1)
 
 import os

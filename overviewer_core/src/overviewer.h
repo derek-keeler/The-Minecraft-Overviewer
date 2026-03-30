@@ -42,6 +42,9 @@
 #include <numpy/arrayobject.h>
 /* Fix Pillow on mingw-w64 which includes windows.h in Imaging.h */
 #undef TRANSPARENT
+
+/* Pillow 12+ uses ModeID enum for im->mode */
+#define OV_MODE_EQ(im, m) ((im)->mode == IMAGING_MODE_##m)
 /* Utility macros */
 #include "mc_id.h"
 #include "utils.h"

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=75.0", "numpy>=2.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "Minecraft-Overviewer"
+description = "Generates large resolution images of a Minecraft map."
+license = {text = "GNU General Public License v3"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Andrew Brown", email = "brownan@gmail.com"},
+]
+urls.Homepage = "http://overviewer.org/"
+
+dynamic = ["version"]
