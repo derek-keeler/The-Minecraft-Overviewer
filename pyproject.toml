@@ -5,7 +5,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 [project]
 name = "Minecraft-Overviewer"
 description = "Generates large resolution images of a Minecraft map."
-license = {text = "GNU General Public License v3"}
+license = "GPL-3.0-only"
 requires-python = ">=3.11"
 authors = [
     {name = "Andrew Brown", email = "brownan@gmail.com"},
@@ -15,3 +15,11 @@ urls.Homepage = "http://overviewer.org/"
 readme = "README.rst"
 
 dynamic = ["version"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+namespaces = true
+include = ["overviewer_core*"]
+exclude = ["overviewer_core.src*"]

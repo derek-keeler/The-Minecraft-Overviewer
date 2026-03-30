@@ -10,7 +10,7 @@ if sys.version_info < (3, 11):
     sys.exit(1)
 
 
-from setuptools import setup, Extension
+from setuptools import setup, Extension, find_namespace_packages
 from setuptools.command.build import build
 from setuptools.command.build_ext import build_ext
 from setuptools.command.sdist import sdist
@@ -86,7 +86,7 @@ def find_system_module_path():
 # script, package, and data
 #
 
-setup_kwargs['packages'] = ['overviewer_core', 'overviewer_core/aux_files']
+setup_kwargs['packages'] = find_namespace_packages(include=['overviewer_core*'], exclude=['overviewer_core.src*'])
 setup_kwargs['scripts'] = ['overviewer.py']
 setup_kwargs['package_data'] = {'overviewer_core': recursive_package_data('data/textures') + recursive_package_data('data/web_assets') + recursive_package_data('data/js_src')}
 
