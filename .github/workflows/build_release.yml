@@ -22,7 +22,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Create Release Tag
         run: |
@@ -99,7 +99,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies (pip)
         run: pip install -r requirements.txt
@@ -157,7 +157,7 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install Dependencies (apt)
         run: |
@@ -215,8 +215,8 @@ jobs:
           echo 'export PATH=\"\$PYENV_ROOT/bin:\$PATH\"' >> /root/.bashrc && \
           echo 'eval \"\$(pyenv init --path)\"' >> /root/.bashrc && \
           source /root/.bashrc && \
-          /workspace/.pyenv/bin/pyenv install 3.11.9 && \
-          /workspace/.pyenv/bin/pyenv global 3.11.9 && \
+          /workspace/.pyenv/bin/pyenv install 3.14.3 && \
+          /workspace/.pyenv/bin/pyenv global 3.14.3 && \
           git clone --branch=12.1.1 --depth=1 https://github.com/python-pillow/Pillow.git /tmp/pillow && \
           pip install -r /workspace/requirements.txt && \
           cd /workspace && \
