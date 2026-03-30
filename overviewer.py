@@ -19,8 +19,8 @@ import platform
 import sys
 
 # quick version check
-if sys.version_info < (3, 11):
-    print("Sorry, the Overviewer requires at least Python 3.11 to run.")
+if sys.version_info < (3, 10):
+    print("Sorry, the Overviewer requires at least Python 3.10 to run.")
     sys.exit(1)
 
 import os
