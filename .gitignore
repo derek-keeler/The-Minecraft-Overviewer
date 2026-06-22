@@ -10,8 +10,9 @@ cachedir*
 #MCPatcher HD texture files
 custom_*.png
 
-# vim swap files
+# vim swap files and backup files
 .*.swp
+**/*~
 
 # user-provided settings file as well as any variations on that name
 settings*.py
@@ -56,3 +57,9 @@ ImagingUtils.h
 tmp/
 temp/
 .tmp/
+
+# Claude/Copilot/Codex/etc... AI framework temporary files
+.claude/
+
+# Pillow temporary files
+pillow-headers/
