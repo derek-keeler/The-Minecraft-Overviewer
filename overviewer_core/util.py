@@ -26,9 +26,9 @@ from string import hexdigits
 from subprocess import PIPE, Popen
 
 DIMENSION_INFO = {
-    "minecraft:overworld": ("DIM0", 0, "minecraft:overworld"),
-    "minecraft:the_end": ("DIM1", 1, "minecraft:the_end"),
-    "minecraft:the_nether": ("DIM-1", -1, "minecraft:the_nether"),
+    "minecraft:overworld": ("minecraft:overworld", 0, "minecraft:overworld"),
+    "minecraft:the_end": ("minecraft:the_end", 1, "minecraft:the_end"),
+    "minecraft:the_nether": ("minecraft:the_nether", -1, "minecraft:the_nether"),
 }
 
 
