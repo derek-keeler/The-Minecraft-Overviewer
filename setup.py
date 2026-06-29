@@ -176,6 +176,16 @@ except Exception:
     if not os.path.exists(pil_include[0]):
         pil_include = [ ]
 
+# Pillow 12 changed its C API (Imaging->mode became a ModeID enum and the
+# ImagingDraw* prototypes moved into Imaging.h). Pass the installed Pillow's
+# major version through to the C sources so they can compile against both the
+# pre-12 and 12+ headers (see OV_MODE_IS / ov_Draw* in overviewer.h).
+try:
+    import PIL
+    pillow_version_major = int(PIL.__version__.split('.')[0])
+except Exception:
+    pillow_version_major = 0
+
 
 # used to figure out what files to compile
 # auto-created from files in primitives/, but we need the raw names so
@@ -209,6 +219,7 @@ setup_kwargs['ext_modules'].append(Extension(
     include_dirs=['.', numpy_include] + pil_include,
     library_dirs=python_lib_dirs,
     depends=c_overviewer_includes,
+    define_macros=[('OV_PILLOW_VERSION_MAJOR', str(pillow_version_major))],
     extra_link_args=[]
 ))
 
@@ -322,8 +333,11 @@ class CustomBuildExt(build_ext):
             for e in self.extensions:
                 e.extra_compile_args.append("-Wno-unused-variable") # quell some annoying warnings
                 e.extra_compile_args.append("-Wno-unused-function") # quell some annoying warnings
-                e.extra_compile_args.append("-Wdeclaration-after-statement")
-                e.extra_compile_args.append("-Werror=declaration-after-statement")
+                # NOTE: we intentionally do NOT add -Werror=declaration-after-statement
+                # here. numpy 2.x's generated __multiarray_api.h (_import_array) contains
+                # a declaration after a statement, which that flag would turn into a hard
+                # compile error under gcc. -std=gnu99 already permits mixed declarations,
+                # so the flag was only ever a stylistic check on our own C.
                 e.extra_compile_args.append("-O3")
                 e.extra_compile_args.append("-std=gnu99")
 
