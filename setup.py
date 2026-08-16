@@ -5,38 +5,25 @@ import traceback
 
 
 # quick version check
-if sys.version_info[0] == 2 or (sys.version_info[0] == 3 and sys.version_info[1] < 4):
-    print("Sorry, the Overviewer requires at least Python 3.4 to run.")
+if sys.version_info < (3, 10):
+    print("Sorry, the Overviewer requires at least Python 3.10 to run.")
     sys.exit(1)
 
 
-from distutils.core import setup
-from distutils.extension import Extension
-from distutils.command.build import build
-from distutils.command.clean import clean
-from distutils.command.build_ext import build_ext
-from distutils.command.sdist import sdist
-from distutils.cmd import Command
-from distutils.dir_util import remove_tree
-from distutils.sysconfig import get_python_inc
-from distutils import log
-import os, os.path
+from setuptools import setup, Extension, find_namespace_packages
+from setuptools.command.build import build
+from setuptools.command.build_ext import build_ext
+from setuptools.command.sdist import sdist
+import logging
+import os
+import os.path
 import glob
 import platform
+import sysconfig
 import time
 import overviewer_core.util as util
 import numpy
 
-try:
-    import py2exe
-except ImportError:
-    py2exe = None
-
-try:
-    import py2app
-    from setuptools.extension import Extension
-except ImportError:
-    py2app = None
 
 # make sure our current working directory is the same directory
 # setup.py is in
@@ -44,8 +31,7 @@ curdir = os.path.split(sys.argv[0])[0]
 if curdir:
     os.chdir(curdir)
 
-# now, setup the keyword arguments for setup
-# (because we don't know until runtime if py2exe/py2app is available)
+# keyword arguments for setup
 setup_kwargs = {}
 setup_kwargs['ext_modules'] = []
 setup_kwargs['cmdclass'] = {}
@@ -74,24 +60,6 @@ setup_kwargs['long_description'] = read('README.rst')
 # top-level files that should be included as documentation
 doc_files = ['COPYING.txt', 'README.rst', 'CONTRIBUTORS.rst', 'sample_config.py']
 
-# helper to create a 'data_files'-type sequence recursively for a given dir
-def recursive_data_files(src, dest=None):
-    if dest is None:
-        dest = src
-
-    ret = []
-    for dirpath, dirnames, filenames in os.walk(src):
-        current_dest = os.path.relpath(dirpath, src)
-        if current_dest == '.':
-            current_dest = dest
-        else:
-            current_dest = os.path.join(dest, current_dest)
-
-        current_sources = map(lambda p: os.path.join(dirpath, p), filenames)
-
-        ret.append((current_dest, current_sources))
-    return ret
-
 # helper to create a 'package_data'-type sequence recursively for a given dir
 def recursive_package_data(src, package_dir='overviewer_core'):
     full_src = os.path.join(package_dir, src)
@@ -115,66 +83,29 @@ def find_system_module_path():
     return system_module_path
 
 #
-# py2exe options
-#
-
-if py2exe is not None:
-    setup_kwargs['comments'] = "http://overviewer.org"
-    # py2exe likes a very particular type of version number:
-    setup_kwargs['version'] = util.findGitTag().replace("-",".")
-
-    setup_kwargs['console'] = ['overviewer.py', 'contribManager.py']
-    setup_kwargs['data_files'] = [('', doc_files)]
-    setup_kwargs['data_files'] += recursive_data_files('overviewer_core/data/textures', 'textures')
-    setup_kwargs['data_files'] += recursive_data_files('overviewer_core/data/web_assets', 'web_assets')
-    setup_kwargs['data_files'] += recursive_data_files('overviewer_core/data/js_src', 'js_src')
-    setup_kwargs['data_files'] += recursive_data_files('contrib', 'contrib')
-    setup_kwargs['zipfile'] = None
-    if platform.system() == 'Windows' and '64bit' in platform.architecture():
-        b = 3
-    else:
-        b = 1
-    setup_kwargs['options']['py2exe'] = {'bundle_files' : b, 'excludes': 'Tkinter', 'includes':
-        ['fileinput', 'overviewer_core.items', 'overviewer_core.aux_files.genPOI']}
-
-#
-# py2app options
-#
-
-if py2app is not None:
-    setup_kwargs['app'] = ['overviewer.py']
-    setup_kwargs['options']['py2app'] = {'argv_emulation' : False}
-    setup_kwargs['setup_requires'] = ['py2app']
-
-#
 # script, package, and data
 #
 
-setup_kwargs['packages'] = ['overviewer_core', 'overviewer_core/aux_files']
+setup_kwargs['packages'] = find_namespace_packages(include=['overviewer_core*'], exclude=['overviewer_core.src*'])
 setup_kwargs['scripts'] = ['overviewer.py']
 setup_kwargs['package_data'] = {'overviewer_core': recursive_package_data('data/textures') + recursive_package_data('data/web_assets') + recursive_package_data('data/js_src')}
 
-if py2exe is None:
-    setup_kwargs['data_files'] = [('share/doc/minecraft-overviewer', doc_files)]
+setup_kwargs['data_files'] = [('share/doc/minecraft-overviewer', doc_files)]
 
 
 #
 # c_overviewer extension
 #
 
-# Third-party modules - we depend on numpy for everything
-# Obtain the numpy include directory.  This logic works across numpy versions.
-try:
-    numpy_include = numpy.get_include()
-except AttributeError:
-    numpy_include = numpy.get_numpy_include()
+# Obtain the numpy include directory
+numpy_include = numpy.get_include()
 
 try:
     pil_include = os.environ['PIL_INCLUDE_DIR'].split(os.pathsep)
 except Exception:
-    pil_include = [ os.path.join(get_python_inc(plat_specific=1), 'Imaging') ]
+    pil_include = [os.path.join(sysconfig.get_path('platinclude'), 'Imaging')]
     if not os.path.exists(pil_include[0]):
-        pil_include = [ ]
+        pil_include = []
 
 
 # used to figure out what files to compile
@@ -194,10 +125,8 @@ c_overviewer_includes = ['overviewer.h', 'rendermodes.h']
 c_overviewer_files = ['overviewer_core/src/' + s for s in c_overviewer_files]
 c_overviewer_includes = ['overviewer_core/src/' + s for s in c_overviewer_includes]
 
-# really ugly hack for our scuffed CI, remove this once we move
-# to something else. The problem is that virtualenv somehow
-# now overrides the base_prefix (which it shouldn't do) which
-# makes distutils unable to find our Python library
+# Workaround for virtualenv overriding base_prefix on Windows,
+# which can prevent finding the Python library directory
 python_lib_dirs = None
 if platform.system() == 'Windows':
     ci_python_dir = os.path.split(find_system_module_path())[0]
@@ -217,42 +146,39 @@ setup_kwargs['ext_modules'].append(Extension(
 # (NOT in build/)
 setup_kwargs['options']['build_ext'] = {'inplace' : 1}
 
-# custom clean command to remove in-place extension
-# and the version file, primitives header
-class CustomClean(clean):
-    def run(self):
-        # do the normal cleanup
-        clean.run(self)
+log = logging.getLogger(__name__)
 
-        # try to remove '_composite.{so,pyd,...}' extension,
-        # regardless of the current system's extension name convention
-        build_ext = self.get_finalized_command('build_ext')
-        ext_fname = build_ext.get_ext_filename('overviewer_core.c_overviewer')
-        versionpath = os.path.join("overviewer_core", "overviewer_version.py")
+# custom clean command to remove in-place extension and primitives header
+class CustomClean(build):
+    description = "clean build artifacts"
+
+    def run(self):
+        import shutil
+        # Remove build directories
+        for d in ['build', 'dist', '*.egg-info']:
+            for path in glob.glob(d):
+                if os.path.isdir(path):
+                    log.info("removing '%s'", path)
+                    shutil.rmtree(path)
+
+        # try to remove c_overviewer extension
+        build_ext_cmd = self.get_finalized_command('build_ext')
+        ext_fname = build_ext_cmd.get_ext_filename('overviewer_core.c_overviewer')
         primspath = os.path.join("overviewer_core", "src", "primitives.h")
 
         for fname in [ext_fname, primspath]:
             if os.path.exists(fname):
                 try:
                     log.info("removing '%s'", fname)
-                    if not self.dry_run:
-                        os.remove(fname)
-
+                    os.remove(fname)
                 except OSError:
-                    log.warning("'%s' could not be cleaned -- permission denied",
-                                fname)
-            else:
-                log.debug("'%s' does not exist -- can't clean it",
-                          fname)
+                    log.warning("'%s' could not be cleaned -- permission denied", fname)
 
-        # now try to purge all *.pyc files
+        # purge all *.pyc files
         for root, dirs, files in os.walk(os.path.join(os.path.dirname(__file__), ".")):
             for f in files:
                 if f.endswith(".pyc"):
-                    if self.dry_run:
-                        log.warning("Would remove %s", os.path.join(root,f))
-                    else:
-                        os.remove(os.path.join(root, f))
+                    os.remove(os.path.join(root, f))
 
 def generate_version_py():
     try:
@@ -323,7 +249,6 @@ class CustomBuildExt(build_ext):
                 e.extra_compile_args.append("-Wno-unused-variable") # quell some annoying warnings
                 e.extra_compile_args.append("-Wno-unused-function") # quell some annoying warnings
                 e.extra_compile_args.append("-Wdeclaration-after-statement")
-                e.extra_compile_args.append("-Werror=declaration-after-statement")
                 e.extra_compile_args.append("-O3")
                 e.extra_compile_args.append("-std=gnu99")
 

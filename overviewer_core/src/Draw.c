@@ -636,7 +636,7 @@ DRAW draw32rgba = {point32rgba, hline32rgba, line32rgba, polygon32rgba};
         ink = INK32(ink_);                   \
     }
 
-int32_t ImagingDrawPoint(Imaging im, int32_t x0, int32_t y0, const void* ink_, int32_t op) {
+int ImagingDrawPoint(Imaging im, int x0, int y0, const void* ink_, int op) {
     DRAW* draw;
     INT32 ink;
 
@@ -647,8 +647,8 @@ int32_t ImagingDrawPoint(Imaging im, int32_t x0, int32_t y0, const void* ink_, i
     return 0;
 }
 
-int32_t ImagingDrawLine(Imaging im, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const void* ink_,
-                        int32_t op) {
+int ImagingDrawLine(Imaging im, int x0, int y0, int x1, int y1, const void* ink_,
+                    int op) {
     DRAW* draw;
     INT32 ink;
 
@@ -659,8 +659,8 @@ int32_t ImagingDrawLine(Imaging im, int32_t x0, int32_t y0, int32_t x1, int32_t 
     return 0;
 }
 
-int32_t ImagingDrawWideLine(Imaging im, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
-                            const void* ink_, int32_t width, int32_t op) {
+int ImagingDrawWideLine(Imaging im, int x0, int y0, int x1, int y1,
+                        const void* ink_, int width, int op, Imaging mask) {
     DRAW* draw;
     INT32 ink;
 

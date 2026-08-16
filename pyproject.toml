@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75.0", "numpy>=2.0"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[project]
+name = "Minecraft-Overviewer"
+description = "Generates large resolution images of a Minecraft map."
+license = "GPL-3.0-only"
+requires-python = ">=3.10"
+authors = [
+    {name = "Andrew Brown", email = "brownan@gmail.com"},
+]
+urls.Homepage = "http://overviewer.org/"
+
+readme = "README.rst"
+
+dynamic = ["version"]
+
+dependencies = [
+    "numpy>=2.0,<3",
+    "pillow>=12.0,<13",
+    "requests>=2.32",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+]
+release = [
+    "pyinstaller>=6.12",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+namespaces = true
+include = ["overviewer_core*"]
+exclude = ["overviewer_core.src*"]

@@ -91,7 +91,7 @@ def findGitTag():
             return overviewer_version.VERSION
         except Exception:
             pass
-    return "unknown"
+    return "0.0.0.dev0"
 
 
 def is_bare_console():
