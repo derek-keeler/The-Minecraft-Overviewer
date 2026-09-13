@@ -30,8 +30,8 @@ jobs:
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install pytest pytest-mock
           PILLOW_VERSION=$(.venv/bin/python -c "import PIL; print(PIL.__version__)")
-          git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git pillow
-          echo "PIL_INCLUDE_DIR=$GITHUB_WORKSPACE/pillow/src/libImaging" >> "$GITHUB_ENV"
+          git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git "$RUNNER_TEMP/pillow"
+          echo "PIL_INCLUDE_DIR=$RUNNER_TEMP/pillow/src/libImaging" >> "$GITHUB_ENV"
 
       - name: Build Overviewer
         run: |

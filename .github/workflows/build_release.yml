@@ -38,8 +38,9 @@ jobs:
         shell: pwsh
         run: |
           $pillowVersion = python -c "import PIL; print(PIL.__version__)"
-          git clone --branch="$pillowVersion" --depth=1 https://github.com/python-pillow/Pillow.git pillow
-          "PIL_INCLUDE_DIR=$env:GITHUB_WORKSPACE\pillow\src\libImaging" >> $env:GITHUB_ENV
+          $pillowPath = Join-Path $env:RUNNER_TEMP "pillow"
+          git clone --branch="$pillowVersion" --depth=1 https://github.com/python-pillow/Pillow.git $pillowPath
+          "PIL_INCLUDE_DIR=$pillowPath\src\libImaging" >> $env:GITHUB_ENV
 
       - name: Build Overviewer for Windows
         run: |
@@ -107,8 +108,8 @@ jobs:
       - name: Checkout matching Pillow headers
         run: |
           PILLOW_VERSION=$(.venv/bin/python -c "import PIL; print(PIL.__version__)")
-          git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git pillow
-          echo "PIL_INCLUDE_DIR=$GITHUB_WORKSPACE/pillow/src/libImaging" >> "$GITHUB_ENV"
+          git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git "$RUNNER_TEMP/pillow"
+          echo "PIL_INCLUDE_DIR=$RUNNER_TEMP/pillow/src/libImaging" >> "$GITHUB_ENV"
 
       - name: Build Overviewer for Linux
         run: |
