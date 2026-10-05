@@ -1,6 +1,8 @@
 # Parametrized image for the Ubuntu LTS legs of the compatibility matrix.
-# Build with: docker build --build-arg BASE=ubuntu:24.04 -f Dockerfile.ubuntu .
-ARG BASE=ubuntu:22.04
+# Build with Docker or Podman (same flags):
+#   docker build --build-arg BASE=docker.io/library/ubuntu:24.04 -f Dockerfile.ubuntu .
+# The base is fully qualified so Podman doesn't have to resolve a short name.
+ARG BASE=docker.io/library/ubuntu:22.04
 FROM ${BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive

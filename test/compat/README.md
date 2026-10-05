@@ -15,16 +15,18 @@ entrypoints:
   - run_matrix.py   # host orchestrator (Windows): drives all OS legs
   - render_test.py  # in-environment worker: build + render + result.json
 inputs:
-  worlds:   "Derek-Single (MC 1.21.11), Tester (MC 26.1), GiveEr26_2 (MC 26.2)"
+  config:   "./config.json — available worlds, selected worlds, and paths (created interactively on first run; see config.example.json)"
+  worlds:   "any saves you choose, each tagged with its Minecraft version and dimensions"
   textures: "matching-version Minecraft client jars from .minecraft/versions"
 outputs:
-  - "per-leg renders + result.json under the --work dir"
+  - "per-leg renders + result.json under work_dir (from config.json)"
   - "a printed PASS/FAIL matrix; process exit code 0 iff every leg passed"
 requires:
-  - docker            # for the Ubuntu legs
+  - "docker or podman" # for the Ubuntu legs (engine: auto picks whichever is on PATH)
   - "a C toolchain"   # gcc in the containers; MSVC for the Windows leg
-  - "installed MC client jars for 1.21.11, 26.1, 26.2"
-  - "the three test worlds present in the saves dir"
+  - "installed MC client jars for each selected world's mc_version"
+  - "the selected test worlds present at their configured locations"
+non_interactive: "pass --yes (or run with non-tty stdin) to skip the selection prompt; config.json must already exist"
 network: "yes — fetches matching Pillow sdist C headers from PyPI at build time"
 safety: "read-only on real saves; worlds are copied to a scratch dir before rendering"
 ---
@@ -39,56 +41,156 @@ flags on gcc, the Pillow 12 C-API change, and Minecraft 26.2 texture relocations
 
 ## High-level quickstart
 
-Run the whole matrix from the **repo root on the Windows host** (needs Docker
-Desktop running and the Minecraft client jars installed):
+Run the whole matrix from the **repo root** (needs Docker or Podman running and
+the Minecraft client jars installed):
 
 ```bash
 python test/compat/run_matrix.py
 ```
 
-That stages the test worlds to a scratch dir, then runs four legs — Windows
-native plus Ubuntu 22.04 / 24.04 / 26.04 containers — building the C extension
-and rendering all three worlds in each. It prints a matrix like:
+**First run:** there is no `config.json` in the current directory yet, so a short
+interview creates one. It asks for your saves, versions, and scratch directories,
+which Ubuntu versions to test, and whether to run the Windows leg. It then lists
+the worlds in your saves directory so you can pick which ones are *available* for
+testing. For each world it reads `level.dat` to suggest the Minecraft version and
+which dimensions exist; accept or override. Worlds stored elsewhere can be added
+by path.
+
+**Every run:** the available worlds are shown with the *selected* ones checked,
+along with any missing world or jar, and you confirm before anything runs:
+
+```
+Test worlds (config.json):
+   1. [x] Legacy-1.21              mc 1.21.11   overworld
+   2. [x] NewLayout-26.1           mc 26.1      overworld, nether, end
+   3. [ ] Snapshot-26.2            mc 26.2      overworld, nether, end    !! jar missing
+Legs: Windows-native, Ubuntu 22.04, Ubuntu 24.04, Ubuntu 26.04
+Run with the 2 selected world(s)? [Y]es / [e]dit / [q]uit [y]:
+```
+
+`e` lets you toggle worlds by number, and the new selection is saved back to
+`config.json`. The script then stages the selected worlds to a scratch dir and
+runs each leg (Windows native, plus one container per Ubuntu version). Each leg
+builds the C extension and renders every selected world. It prints a matrix like:
 
 ```
 scenario           python   numpy      result   per-world
-Windows-native     3.14.5   2.5.0      PASS     Derek-Single=ok Tester=ok GiveEr26_2=ok
-Ubuntu 22.04       3.10.12  1.21.5     PASS     Derek-Single=ok Tester=ok GiveEr26_2=ok
-Ubuntu 24.04       3.12.3   1.26.4     PASS     Derek-Single=ok Tester=ok GiveEr26_2=ok
-Ubuntu 26.04       3.14.4   2.3.5      PASS     Derek-Single=ok Tester=ok GiveEr26_2=ok
+Windows-native     3.14.5   2.5.0      PASS     Legacy-1.21=ok NewLayout-26.1=ok
+Ubuntu 22.04       3.10.12  1.21.5     PASS     Legacy-1.21=ok NewLayout-26.1=ok
+Ubuntu 24.04       3.12.3   1.26.4     PASS     Legacy-1.21=ok NewLayout-26.1=ok
+Ubuntu 26.04       3.14.4   2.3.5      PASS     Legacy-1.21=ok NewLayout-26.1=ok
 ```
 
-Exit code is `0` only if every leg passed. Common subsets:
+Exit code is `0` only if every leg passed. Common options:
 
 ```bash
+# Non-interactive (agents/CI): use config.json as-is, no confirmation prompt.
+python test/compat/run_matrix.py --yes
+
 # Just the Ubuntu legs (skip the Windows native build):
 python test/compat/run_matrix.py --skip-windows
 
-# A single Ubuntu version:
+# A single Ubuntu version (overrides the config's list for this run):
 python test/compat/run_matrix.py --skip-windows --ubuntu 26.04
 
-# Point at non-default saves / versions / scratch locations:
-python test/compat/run_matrix.py \
-    --saves    "D:/mc/saves" \
-    --versions "D:/mc/versions" \
-    --work     "D:/tmp/ovmatrix"
+# Force a container engine (default "auto": docker if on PATH, else podman):
+python test/compat/run_matrix.py --engine podman
+
+# Use a different config file, or redo the setup interview:
+python test/compat/run_matrix.py --config D:/mc/ovmatrix.json
+python test/compat/run_matrix.py --setup
 ```
 
 Renders and a machine-readable `result.json` for each leg land under
-`--work/out/<leg>/` (default `--work` is `…/Temp/ov_compat_matrix`). Open any
-`…/out/<leg>/<world>/index.html` to eyeball a render.
+`<work_dir>/out/<leg>/` (default `work_dir` is `…/Temp/ov_compat_matrix`). Open
+any `…/out/<leg>/<world>/index.html` to eyeball a render.
+
+### `config.json`
+
+`config.json` holds machine-specific paths and your own worlds, so it is
+gitignored. `config.example.json` shows the format:
+
+| Key | Meaning |
+|-----|---------|
+| `saves_dir` | Where worlds live by default (`<saves_dir>/<world name>`). |
+| `versions_dir` | Minecraft versions dir; must contain `<ver>/<ver>.jar` for each world's `mc_version`. |
+| `work_dir` | Scratch dir for staged world copies, venv, and renders. Optional. |
+| `ubuntu` | Ubuntu versions to run as container legs. Optional, defaults to 22.04 / 24.04 / 26.04. |
+| `windows` | Run the Windows-native leg when on Windows. Optional, defaults to `true`. |
+| `engine` | Container engine for the Ubuntu legs: `auto`, `docker` or `podman`. Optional, defaults to `auto` (Docker if it's on PATH, otherwise Podman). |
+| `worlds` | The **available** worlds, keyed by name: `mc_version`, `dimensions` (`overworld` / `nether` / `end`), and an optional `path` if the world isn't in `saves_dir`. |
+| `selected` | The names from `worlds` to test on this run. |
+
+### Choosing test worlds
+
+Use small worlds, because each one is rendered once per leg. Together they should
+cover the Minecraft versions and world layouts you care about. A good set is:
+
+- a pre-26.1 world (legacy `region/`, `DIM-1`, `DIM1` layout);
+- a 26.1+ world (new `dimensions/minecraft/*` layout) with the nether and end visited;
+- a world on the newest supported version, to catch texture relocations.
+
+To create one, start a new world in that Minecraft client version, walk around
+long enough to generate some chunks, visit the other dimensions if you want them
+rendered, then quit. Add it with `--setup` or by editing `config.json`.
 
 ## Prerequisites
 
-- **Docker** running (Ubuntu legs). Base images `ubuntu:22.04/24.04/26.04` are pulled on demand.
-- **Minecraft client jars** for each world's version under the versions dir, i.e.
-  `versions/1.21.11/1.21.11.jar`, `versions/26.1/26.1.jar`, `versions/26.2/26.2.jar`.
-  These supply version-accurate textures (server jars contain no textures).
-- **The three test worlds** in the saves dir: `Derek-Single`, `Tester`, `GiveEr26_2`.
+- **Docker or Podman** running (Ubuntu legs). Base images
+  `docker.io/library/ubuntu:22.04/24.04/26.04` are pulled on demand. The engine is
+  checked before anything runs, so a stopped Podman machine fails fast with a hint.
+  See [Using Podman](#using-podman).
+- **Minecraft client jars** for each selected world's `mc_version` under the versions
+  dir, e.g. `versions/1.21.11/1.21.11.jar`. Launch that version once in the official
+  launcher to download it. These supply version-accurate textures (server jars
+  contain no textures).
+- **Test worlds**: see [Choosing test worlds](#choosing-test-worlds).
 - **A C compiler** — gcc is installed inside the containers; the Windows leg needs the
   MSVC build tools already present on the host.
 - **Network access** — each leg downloads the matching Pillow source distribution to get
   `Imaging.h` (neither pip wheels nor apt ship Pillow's C headers).
+
+### Using Podman
+
+Podman works as a drop-in for Docker here: the same `Dockerfile.ubuntu`, and the
+same `build` / `run` flags. Compose isn't used. Select it with `"engine": "podman"`
+in `config.json`, or `--engine podman`. With `auto`, it is used whenever `docker`
+isn't on PATH.
+
+On Windows and macOS Podman runs containers inside a Linux VM (the "machine"),
+which, unlike Docker Desktop, you start yourself:
+
+```bash
+podman machine init      # once
+podman machine start     # each boot / session
+```
+
+**Paths.** On Windows, the orchestrator passes ordinary `C:\...` paths for the
+mounts. Podman translates them to the machine's `/mnt/c/...` itself (see
+[volume mounting](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md#volume-mounting)),
+so `saves_dir`, `versions_dir` and `work_dir` can stay as Windows paths.
+
+**File ownership.** Rootless Podman (the default) maps the container's root
+user to you, so renders under `<work_dir>/out/` belong to your user. Under
+Docker on Linux they would belong to root.
+
+**Resources for larger worlds.** Overviewer starts one render worker per CPU it
+can see, and every worker needs memory. The machine's defaults (often 2 GiB of
+RAM, with all of the host's CPUs) are fine for small test worlds. Larger worlds
+can run out of memory, which shows up as killed workers or a failed render.
+Either give the machine more memory or let it see fewer CPUs, which means fewer
+workers:
+
+```bash
+podman machine stop
+podman machine set --memory 8192 --cpus 4    # MiB; tune to your host
+podman machine start
+podman machine inspect --format "{{.Resources.Memory}} MiB, {{.Resources.CPUs}} CPUs"
+```
+
+When running a world by hand, you can also cap the workers per render with
+Overviewer's own switch: `python overviewer.py -p 2 --config=...`. The Docker
+Desktop equivalent of the machine settings is *Settings → Resources*.
 
 ---
 
@@ -98,9 +200,10 @@ Renders and a machine-readable `result.json` for each leg land under
 
 | File | Role |
 |------|------|
-| `run_matrix.py` | Host orchestrator. Stages worlds, runs the Windows-native leg in a fresh venv and each Ubuntu leg in a container, collects `result.json`, prints the matrix. |
-| `render_test.py` | The per-environment worker. Runs *inside* a leg: prints env + numpy/Pillow provenance, ensures Pillow headers, builds `c_overviewer`, renders each world, writes `result.json`. OS-agnostic (stdlib + project deps only). |
-| `Dockerfile.ubuntu` | Parametrized image (`--build-arg BASE=ubuntu:<ver>`). Installs OS-provided deps via apt (`python3-numpy python3-pil python3-networkx python3-requests`, build tooling). |
+| `run_matrix.py` | Host orchestrator. Loads or creates `config.json`, confirms the world selection, stages the selected worlds plus a `manifest.json`, runs the Windows-native leg in a fresh venv and each Ubuntu leg in a container, collects `result.json`, prints the matrix. |
+| `render_test.py` | The per-environment worker. Runs *inside* a leg: prints env + numpy/Pillow provenance, ensures Pillow headers, builds `c_overviewer`, renders each world listed in the staged `manifest.json`, writes `result.json`. OS-agnostic (stdlib + project deps only). |
+| `Dockerfile.ubuntu` | Parametrized image (`--build-arg BASE=docker.io/library/ubuntu:<ver>`), built with Docker or Podman. Installs OS-provided deps via apt (`python3-numpy python3-pil python3-networkx python3-requests`, build tooling). |
+| `config.example.json` | Example of the `config.json` format. |
 | `entrypoint.sh` | Container entry: copies the read-only repo to a writable `/work`, then invokes `render_test.py` against the mounted worlds/versions/output. |
 
 ### What each leg does
@@ -114,16 +217,19 @@ Renders and a machine-readable `result.json` for each leg land under
 5. **Judge** — a world passes if Overviewer exits 0 and every requested dimension produced
    `> 0` PNG tiles. The leg passes if all worlds pass.
 
-### World / version / texture map (defined in `render_test.py`)
+### How worlds reach each leg
 
-| World | MC version | Dimensions rendered | Layout exercised |
-|-------|-----------|---------------------|------------------|
-| `Derek-Single` | 1.21.11 | overworld | legacy (`region/`, `DIM*`) |
-| `Tester` | 26.1 | overworld, nether, end | new `dimensions/minecraft/*` |
-| `GiveEr26_2` | 26.2 | overworld, nether, end | new layout + 26.2 texture relocations |
+`run_matrix.py` copies each selected world to `<work_dir>/worlds/<name>`. It skips
+worlds that were already staged, so delete the copy to refresh it. It then writes
+`<work_dir>/worlds/manifest.json`:
 
-To add a world, extend the `WORLDS` dict in `render_test.py` (and have a matching
-`versions/<ver>/<ver>.jar` and a copy of the world available).
+```json
+{"worlds": [{"name": "Legacy-1.21", "mc_version": "1.21.11", "dimensions": ["overworld"]}]}
+```
+
+That directory is mounted read-only into each container at `/worlds`.
+`render_test.py` reads the manifest from there (or from `--manifest`), so it has
+no world list of its own.
 
 ### Why containers, and the dev-box fallback trap
 
@@ -159,15 +265,15 @@ In-place worker (uses the current interpreter's numpy/Pillow):
 
 ```bash
 python test/compat/render_test.py \
-    --worlds  "<staged worlds dir>" \
+    --worlds  "<staged worlds dir, containing manifest.json>" \
     --versions "<versions dir>" \
     --output  "<output dir>"
 ```
 
-One Ubuntu image + container directly:
+One Ubuntu image + container directly (`podman` takes the same arguments):
 
 ```bash
-docker build --build-arg BASE=ubuntu:26.04 -t ov-compat-2604 -f test/compat/Dockerfile.ubuntu test/compat
+docker build --build-arg BASE=docker.io/library/ubuntu:26.04 -t ov-compat-2604 -f test/compat/Dockerfile.ubuntu test/compat
 docker run --rm \
     -v "<repo>:/repo:ro" \
     -v "<staged worlds>:/worlds:ro" \
@@ -177,5 +283,5 @@ docker run --rm \
 ```
 
 > Note: this harness is a developer/CI utility, kept separate from the unit test suite
-> (`test/test_*.py`). It shells out to Docker and a platform compiler and is not collected
+> (`test/test_*.py`). It shells out to Docker/Podman and a platform compiler and is not collected
 > by `pytest`.

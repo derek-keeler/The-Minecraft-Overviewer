@@ -28,13 +28,12 @@ import sys
 import tarfile
 import urllib.request
 
-# world name -> (version dir / jar basename, [dimensions])
-# Matching-version client jars supply version-accurate textures.
-WORLDS = {
-    "Derek-Single": ("1.21.11", ["overworld"]),                  # legacy layout
-    "Tester":       ("26.1",    ["overworld", "nether", "end"]),  # 26.1 new layout
-    "GiveEr26_2":   ("26.2",    ["overworld", "nether", "end"]),  # 26.2 new layout
-}
+# Name of the manifest run_matrix.py writes into the staged worlds dir. It lists
+# the worlds to render, each with the Minecraft version whose client jar
+# supplies version-accurate textures and the dimensions to render:
+#   {"worlds": [{"name": "MyWorld", "mc_version": "1.21.11",
+#                "dimensions": ["overworld", "nether", "end"]}]}
+MANIFEST_NAME = "manifest.json"
 
 
 def log(msg):
@@ -112,8 +111,16 @@ def build_extension(repo):
                    cwd=repo, check=True)
 
 
-def render_world(repo, name, versions_dir, worlds_dir, out_root):
-    version, dims = WORLDS[name]
+def load_manifest(path):
+    with open(path) as f:
+        worlds = json.load(f)["worlds"]
+    if not worlds:
+        raise SystemExit("no worlds listed in %s" % path)
+    return worlds
+
+
+def render_world(repo, world, versions_dir, worlds_dir, out_root):
+    name, version, dims = world["name"], world["mc_version"], world["dimensions"]
     jar = os.path.join(versions_dir, version, "%s.jar" % version)
     world_path = os.path.join(worlds_dir, name)
     out_dir = os.path.join(out_root, name)
@@ -149,8 +156,11 @@ def main():
     ap.add_argument("--worlds", required=True, help="dir containing the test worlds")
     ap.add_argument("--versions", required=True, help="dir containing <ver>/<ver>.jar")
     ap.add_argument("--output", required=True, help="dir to write renders into")
+    ap.add_argument("--manifest", default=None,
+                    help="worlds manifest JSON (default: <worlds>/%s)" % MANIFEST_NAME)
     ap.add_argument("--result-json", default=None, help="optional path for JSON result")
     args = ap.parse_args()
+    worlds = load_manifest(args.manifest or os.path.join(args.worlds, MANIFEST_NAME))
 
     os.makedirs(args.output, exist_ok=True)
     env = {
@@ -169,8 +179,8 @@ def main():
     ensure_pillow_headers(args.output)
     build_extension(args.repo)
 
-    results = [render_world(args.repo, name, args.versions, args.worlds, args.output)
-               for name in WORLDS]
+    results = [render_world(args.repo, w, args.versions, args.worlds, args.output)
+               for w in worlds]
     summary = {"env": env, "results": results,
                "passed": all(r["passed"] for r in results)}
 
