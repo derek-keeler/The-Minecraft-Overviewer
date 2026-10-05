@@ -107,8 +107,10 @@ def ensure_pillow_headers(workdir):
 
 def build_extension(repo):
     log(">>> Building c_overviewer against numpy %s ..." % numpy_provenance()["version"])
-    subprocess.run([sys.executable, "setup.py", "build_ext", "--inplace"],
-                   cwd=repo, check=True)
+    # "build", not "build_ext": only the former generates primitives.h and
+    # overviewer_version.py, which a fresh checkout doesn't have. Its
+    # build_ext step also builds in place, which is what overviewer.py loads.
+    subprocess.run([sys.executable, "setup.py", "build"], cwd=repo, check=True)
 
 
 def load_manifest(path):

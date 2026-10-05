@@ -170,6 +170,12 @@ mounts. Podman translates them to the machine's `/mnt/c/...` itself (see
 [volume mounting](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md#volume-mounting)),
 so `saves_dir`, `versions_dir` and `work_dir` can stay as Windows paths.
 
+**cgroups.** Podman containers run with `--cgroups=disabled`. The harness sets
+no resource limits, and some Podman machines (seen on WSL, where systemd isn't
+running inside the machine) don't hand cgroup controllers down to containers.
+Without the flag, every container then fails to start with
+``crun: controller `pids` is not available``.
+
 **File ownership.** Rootless Podman (the default) maps the container's root
 user to you, so renders under `<work_dir>/out/` belong to your user. Under
 Docker on Linux they would belong to root.
@@ -212,7 +218,8 @@ Desktop equivalent of the machine settings is *Settings → Resources*.
    you can confirm *which* numpy/Pillow was used (apt vs pip, 1.x vs 2.x).
 2. **Ensure Pillow C headers** — read `PIL.__version__`, download that exact Pillow sdist,
    extract `src/libImaging/*.h`, and expose them via `PIL_INCLUDE_DIR`.
-3. **Build** `c_overviewer` with `setup.py build_ext --inplace` against the leg's numpy.
+3. **Build** `c_overviewer` with `setup.py build` (which also generates `primitives.h` and
+   `overviewer_version.py`, and builds the extension in place) against the leg's numpy.
 4. **Render** each world to its own output dir with the matching client jar as `texturepath`.
 5. **Judge** — a world passes if Overviewer exits 0 and every requested dimension produced
    `> 0` PNG tiles. The leg passes if all worlds pass.

@@ -138,7 +138,13 @@ def detect_world_info(world_dir):
         pass
 
     def has(*parts):
-        return os.path.isdir(os.path.join(world_dir, *parts))
+        # Minecraft creates DIM-1/ and DIM1/ (holding just data/) in every
+        # world, visited or not, so look for actual region files.
+        region = os.path.join(world_dir, *parts, "region")
+        try:
+            return any(f.endswith(".mca") for f in os.listdir(region))
+        except OSError:
+            return False
     dims = ["overworld"]
     if has("DIM-1") or has("dimensions", "minecraft", "the_nether"):
         dims.append("nether")
@@ -170,8 +176,13 @@ def parse_numbers(text, count):
 def describe_world(cfg, name):
     w = cfg["worlds"][name]
     notes = []
-    if not os.path.isdir(world_source(cfg, name)):
+    src = world_source(cfg, name)
+    if not os.path.isdir(src):
         notes.append("world missing")
+    else:
+        empty = [d for d in w["dimensions"] if d not in detect_world_info(src)[1]]
+        if empty:
+            notes.append("no %s data" % "/".join(empty))
     if not os.path.isfile(jar_path(cfg, w["mc_version"])):
         notes.append("jar missing")
     return ("%-24s mc %-9s %-24s%s" % (
@@ -374,6 +385,21 @@ def run_windows(worlds, versions, work):
     return ("Windows-native", proc.returncode, read_result(out))
 
 
+def git_version():
+    """The host checkout's tag and commit, for entrypoint.sh (the container has
+    no .git, and setup.py rejects the 'unknown' version it falls back to)."""
+    info = {}
+    for var, cmd in (("OV_VERSION", ["git", "describe", "--tags", "--abbrev=0"]),
+                     ("OV_HASH", ["git", "rev-parse", "HEAD"])):
+        try:
+            out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+        except OSError:  # git not installed
+            break
+        if out.returncode == 0 and out.stdout.strip():
+            info[var] = out.stdout.strip()
+    return info
+
+
 def run_ubuntu(engine, tag, worlds, versions, work):
     image = "ov-compat-%s" % tag.replace(":", "-").replace(".", "")
     out = prepare_output(work, tag.replace(":", "-"))
@@ -382,14 +408,30 @@ def run_ubuntu(engine, tag, worlds, versions, work):
                  "-t", image, "-f", os.path.join(HERE, "Dockerfile.ubuntu"), HERE])
     if build.returncode != 0:
         return ("Ubuntu %s" % tag, build.returncode, None)
+    cmd = [engine, "run", "--rm"]
+    if engine == "podman":
+        # We set no resource limits, so cgroups buy nothing here. Podman
+        # machines without systemd (seen on WSL) don't delegate cgroup
+        # controllers, and crun then refuses to start any container
+        # ("controller `pids` is not available").
+        cmd.append("--cgroups=disabled")
+    try:
+        rel_work = os.path.relpath(os.path.abspath(work), REPO)
+    except ValueError:  # different drive on Windows
+        rel_work = os.pardir
+    if not rel_work.startswith(os.pardir) and rel_work != os.curdir:
+        # work_dir lives inside the repo: keep entrypoint.sh from copying the
+        # staged worlds and earlier outputs into the container's /work.
+        cmd += ["-e", "COMPAT_EXCLUDE=/%s" % rel_work.replace(os.sep, "/")]
+    for var, value in git_version().items():
+        cmd += ["-e", "%s=%s" % (var, value)]
     # Windows paths are fine for both engines: Podman on Windows translates
     # C:\... to the machine's /mnt/c/... itself.
-    proc = run([engine, "run", "--rm",
-                "-v", "%s:/repo:ro" % REPO,
-                "-v", "%s:/worlds:ro" % worlds,
-                "-v", "%s:/mc-versions:ro" % versions,
-                "-v", "%s:/output" % out,
-                image])
+    proc = run(cmd + ["-v", "%s:/repo:ro" % REPO,
+                      "-v", "%s:/worlds:ro" % worlds,
+                      "-v", "%s:/mc-versions:ro" % versions,
+                      "-v", "%s:/output" % out,
+                      image])
     return ("Ubuntu %s" % tag, proc.returncode, read_result(out))
 
 
