@@ -39,6 +39,13 @@ Since Minecraft Maps can be infinite, the maximum time this could take is also i
 
 ## Running Overviewer
 
+Minecraft 26.3 save-format support includes namespaced dimension folders and
+compact block-state palettes, while retaining legacy world support. New-block
+coverage is incremental; unsupported blocks are reported in the log. Use the
+26.3 client jar as `texturepath` for 26.3 worlds. See
+[source build instructions](docs/building.rst) and
+[26.x compatibility notes](docs/running.rst).
+
 While Overviewer can be run directly from the command line, it's generally easiest to set up a configuration file and running script once that you can then use whenever you want to update your map, so that's what we'll go over here. It's worth noting that this guide is designed for use on Windows computers.
 
 **Step 1:** Download the latest zipped release from [Github](https://github.com/GregoryAM-SP/The-Minecraft-Overviewer/releases).

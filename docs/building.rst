@@ -46,38 +46,57 @@ Prerequisites
 You will need the following:
 
 - `Python 3.10 or newer <https://www.python.org/downloads/windows/>`_
-- A copy of the `Pillow sources <https://github.com/python-pillow/Pillow>`_.
+- `Pillow sources <https://github.com/python-pillow/Pillow>`_ matching the
+  installed Pillow version exactly.
 - The Pillow Extension for Python.
 - The Numpy Extension for Python.
-- The extensions can be installed via::
 
-    py -3.10 -m pip -U numpy pillow
+On Windows, create and activate a project virtual environment in PowerShell,
+then install the dependencies::
+
+    py -3.10 -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+
+The Windows examples use Python 3.10, matching the Ubuntu 22.04 baseline.
+Do not overwrite an existing environment containing work you need to keep.
 
 
 Building with Visual Studio
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. Get the latest Overviewer source code as per above.
-2. From the Start menu, navigate to 'Visual Studio 2017' and open the **'Developer Command Prompt for VS 2017'** (*or whatever year*) shortcut. A regular command or powershell prompt will *NOT* work for this.
-3. cd to the folder containing the Overviewer source code.
-4. Download or clone the Pillow source release that exactly matches the Pillow package installed in your Python environment.
-5. Point ``PIL_INCLUDE_DIR`` at that Pillow source tree's ``src/libImaging`` directory.
-6. First try a build::
+2. Install Visual Studio's **Desktop development with C++** workload.
+3. In PowerShell, change to the folder containing the Overviewer source code.
+4. With the virtual environment above activated, download the headers for the
+   installed Pillow version and build::
 
-    set PIL_INCLUDE_DIR=C:\path\to\Pillow\src\libImaging
-    py -3.10 setup.py build
+    $pillowVersion = python -c "import PIL; print(PIL.__version__)"
+    python -m pip download --no-deps --no-binary=:all: --dest tmp "pillow==$pillowVersion"
+    python -m tarfile -e ".\tmp\pillow-$pillowVersion.tar.gz" .\tmp
+    $env:PIL_INCLUDE_DIR = (Resolve-Path ".\tmp\pillow-$pillowVersion\src\libImaging").Path
+    python setup.py build
+
+   Setuptools normally discovers Visual Studio automatically. If discovery
+   fails, run from its x64 Native Tools command prompt, or call ``vcvars64.bat``
+   and the build command in the same ``cmd.exe`` process. Do not use headers
+   from a different Pillow checkout: an ABI mismatch can crash the renderer.
 
 If you encounter the following errors::
 
     error: Unable to find vcvarsall.bat
 
-then try the following::
+then open a Visual Studio x64 Native Tools command prompt (``cmd.exe``, not
+PowerShell), change to the source directory, and try::
 
     set DISTUTILS_USE_SDK=1
     set MSSdk=1
-    py -3.10 setup.py build
+    set PIL_INCLUDE_DIR=C:\path\to\matching\Pillow\src\libImaging
+    .venv\Scripts\python.exe setup.py build
 
-If the build was successful, there should be a c_overviewer.pyd file in your current working directory.
+If the build was successful, there will be a ``c_overviewer*.pyd`` file in
+``overviewer_core``. Run Overviewer with the same venv's Python executable.
 
 Building with mingw-w64 and msys2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -140,12 +159,13 @@ pip, Python headers, compiler tooling, and git from the package manager::
     sudo apt-get update
     sudo apt-get install python3 python3-dev python3-venv python3-pip build-essential git
 
-Then create a virtual environment and install Overviewer's Python dependencies
-from ``requirements.txt``::
+On Linux, create and activate a project virtual environment in Bash, then
+install Overviewer's Python dependencies from ``requirements.txt``::
 
     python3 -m venv .venv
-    .venv/bin/python -m pip install --upgrade pip
-    .venv/bin/python -m pip install -r requirements.txt
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
 
 Overviewer requires Pillow's source headers to build its C extension. Download
 or clone the Pillow source release that exactly matches the version of Pillow
@@ -154,18 +174,18 @@ installed in the virtual environment, and point ``PIL_INCLUDE_DIR`` at its
 library and the headers can lead to compile failures or segfaults while running
 Overviewer due to an ABI mismatch::
 
-    PILLOW_VERSION=$(.venv/bin/python -c "import PIL; print(PIL.__version__)")
+    PILLOW_VERSION=$(python -c "import PIL; print(PIL.__version__)")
     git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git /tmp/pillow
     export PIL_INCLUDE_DIR=/tmp/pillow/src/libImaging
 
 Then build::
 
-    .venv/bin/python setup.py build
+    python setup.py build
 
-At this point, you can run ``overviewer.py`` from the current directory with the
-virtual environment's Python::
+At this point, you can run ``overviewer.py`` from the current directory while
+the virtual environment is activated::
 
-    .venv/bin/python overviewer.py --config=/path/to/your/config
+    python overviewer.py --config=/path/to/your/config
 
 
 macOS

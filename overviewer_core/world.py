@@ -28,6 +28,7 @@ import math
 from . import nbt
 from . import cache
 from .biome import reshape_biome_data
+from .blockstate_defaults import DEFAULT_BLOCK_PROPERTIES
 
 """
 This module has routines for extracting information about available worlds
@@ -40,6 +41,28 @@ class ChunkDoesntExist(Exception):
 
 class UnsupportedVersion(Exception):
     pass
+
+
+def normalize_blockstate(entry):
+    """Expand 26.3 shorthand states without changing legacy palette entries."""
+    if isinstance(entry, dict) and set(entry) == {""}:
+        entry = entry[""]
+    if isinstance(entry, str):
+        name, properties = entry, {}
+    elif isinstance(entry, dict):
+        if "Name" in entry:
+            return entry
+        name, properties = entry.get("id"), entry.get("properties", {})
+    else:
+        raise nbt.CorruptChunkError("Invalid block state palette entry: %r" % (entry,))
+    if (not isinstance(name, str) or not name or not isinstance(properties, dict)
+            or any(not isinstance(k, str) or not isinstance(v, str)
+                   for k, v in properties.items())):
+        raise nbt.CorruptChunkError("Invalid block state palette entry: %r" % (entry,))
+    return {
+        "Name": name,
+        "Properties": dict(DEFAULT_BLOCK_PROPERTIES.get(name, {}), **properties),
+    }
 
 
 def log_other_exceptions(func):
@@ -143,6 +166,12 @@ class World(object):
                     else:
                         self.regionsets.append(rset)
 
+        # Prefer converted vanilla dimensions over any leftover legacy folders.
+        self.regionsets.sort(key=lambda r: (
+            r.get_type() != "minecraft:overworld",
+            not r.rel.startswith(os.path.join("dimensions", "minecraft") + os.sep),
+        ))
+
         # TODO move a lot of the following code into the RegionSet
 
 
@@ -232,7 +261,7 @@ class World(object):
         inChunkY = spawnY % 16
 
         ## Open up the chunk that the spawn is in
-        regionset = self.get_regionset('minecraft:overworld')
+        regionset = self.get_regionset(dimension[1])
         if not regionset:
             return None
         try:
@@ -243,17 +272,16 @@ class World(object):
         ## Check for first air block (0) above spawn
         
         # Get only the spawn section and the ones above, ordered from low to high
-        spawnChunkSections = sorted(chunk['Sections'], key=lambda sec: sec['Y'])[chunkY:]
+        spawnChunkSections = sorted(
+            (sec for sec in chunk['Sections'] if sec['Y'] >= chunkY),
+            key=lambda sec: sec['Y'])
         for section in spawnChunkSections:
             # First section, start at registered local y
-            for y in range(inChunkY, 16):
+            startY = inChunkY if section['Y'] == chunkY else 0
+            for y in range(startY, 16):
                 # If air, return absolute coords
-                if section['Blocks'][inChunkX, inChunkZ, y] == 0:
-                    return spawnX, spawnY, spawnZ
-                # Keep track of the absolute Y
-                spawnY += 1
-            # Next section, start at local 0
-            inChunkY = 0
+                if section['Blocks'][y, inChunkZ, inChunkX] == 0:
+                    return spawnX, section['Y'] * 16 + y, spawnZ
         return spawnX, 320, spawnZ
 
 class RegionSet(object):
@@ -297,28 +325,14 @@ class RegionSet(object):
             os.path.normpath("dimensions/minecraft/the_end"): "minecraft:the_end",
         }
 
-        # we want to get rid of /regions, if it exists
-        if self.rel.endswith(os.path.normpath("/region")):
-            self.type = self.rel[0:-len(os.path.normpath("/region"))]
-        elif self.rel.endswith(os.path.normpath("/entities")):
-            self.type = self.rel
-        elif self.rel == "region":
-            # this is the main world
-            self.type = "minecraft:overworld"
-        elif self.rel == "entities":
-            self.type = "minecraft:overworld/entities"
+        dimension, kind = os.path.split(self.rel)
+        if kind in ("region", "entities"):
+            self.type = _dim_path_to_namespaced.get(dimension, dimension) or "minecraft:overworld"
+            if kind == "entities":
+                self.type += "/entities"
         else:
             logging.warning("Unknown region type in %r, rel %r", regiondir, self.rel)
             self.type = "__unknown"
-
-        # Normalize legacy DIM* and Minecraft 26.1+ dimension paths to
-        # the namespaced dimension name used throughout the code.
-        if self.type in _dim_path_to_namespaced:
-            self.type = _dim_path_to_namespaced[self.type]
-        elif self.type.endswith(os.path.normpath("/entities")):
-            base = self.type[0:-len(os.path.normpath("/entities"))]
-            if base in _dim_path_to_namespaced:
-                self.type = _dim_path_to_namespaced[base] + "/entities"
 
         logging.debug("Scanning regions.  Type is %r" % self.type)
 
@@ -336,6 +350,7 @@ class RegionSet(object):
                 logging.debug("Skipping zero-size region file {}".format(regionfile))
 
         self.empty_chunk = [None,None]
+        self._unrecognized_blocks = set()
         logging.debug("Done scanning regions")
 
         self._biomemap = [
@@ -415,7 +430,9 @@ class RegionSet(object):
             'minecraft:small_end_islands',
             'minecraft:end_barrens',
             'minecraft:cherry_grove',
-            'minecraft:pale_garden'
+            'minecraft:pale_garden',
+            'minecraft:sulfur_caves',
+            'minecraft:dappled_forest',
         ]
 
         self._blockmap = {
@@ -859,6 +876,11 @@ class RegionSet(object):
 
             'minecraft:copper_torch': (264, 0),
             'minecraft:copper_wall_torch': (264, 5),
+
+            'minecraft:sulfur': (265, 0),
+            'minecraft:cinnabar': (266, 0),
+            'minecraft:potent_sulfur': (267, 0),
+            'minecraft:sulfur_spike': (268, 0),
 
             'minecraft:armor_stand': (416, 0),  # not rendering
 
@@ -1504,6 +1526,8 @@ class RegionSet(object):
         return "<RegionSet regiondir=%r>" % self.regiondir
 
     def _get_block(self, palette_entry):
+        palette_entry = normalize_blockstate(palette_entry)
+
         def generate_copper(base_id, base_ns="minecraft"):
             variants = []
             states = ['','exposed_','weathered_','oxidized_']
@@ -1918,7 +1942,7 @@ class RegionSet(object):
                 data |= (4 << 4)
             if p['west'] == 'true':
                 data |= (8 << 4)
-        elif key == 'minecraft:pointed_dripstone':
+        elif key in ('minecraft:pointed_dripstone', 'minecraft:sulfur_spike'):
             p = palette_entry['Properties']
             data = {'tip': 0, 'tip_merge': 1, 'middle': 2, 'frustum': 3, 'base': 4}[p['thickness']]
             data |= {'up': 0, 'down': 0b1000}[p['vertical_direction']]
@@ -2194,8 +2218,8 @@ class RegionSet(object):
 
             try:
                 translated_biomes[i] = self._biomemap.index(key)
-            except KeyError:
-                raise Exception("Unknown biome `%s` wanted, investigate!" % key)
+            except ValueError as exc:
+                raise nbt.CorruptChunkError("Unsupported biome %r" % key) from exc
 
         if not biome_data:
             #no biome-dataarray, means entire biome is palette[0]
@@ -2336,11 +2360,15 @@ class RegionSet(object):
         translated_blocks = numpy.zeros((num_palette_entries,), dtype=numpy.uint16) # block IDs
         translated_data = numpy.zeros((num_palette_entries,), dtype=numpy.uint8) # block data
         for i in range(num_palette_entries):
-            key = palette[i]
+            key = normalize_blockstate(palette[i])
             try:
                 translated_blocks[i], translated_data[i] = self._get_block(key)
-            except KeyError:
-                pass    # We already have initialised arrays with 0 (= air)
+            except KeyError as exc:
+                name = key['Name']
+                if name in self._blockmap:
+                    raise nbt.CorruptChunkError("Invalid properties for block %r: %s"
+                                               % (name, exc)) from exc
+                unrecognized_block_types[name] = unrecognized_block_types.get(name, 0) + 1
 
         # Turn the BlockStates array into a 16x16x16 numpy matrix of shorts.
         blocks = numpy.empty((4096,), dtype=numpy.uint16)
@@ -2506,7 +2534,10 @@ class RegionSet(object):
                 raise nbt.CorruptChunkError()
 
         for k in unrecognized_block_types:
-            logging.debug("Found %d blocks of unknown type %s" % (unrecognized_block_types[k], k))
+            if k not in self._unrecognized_blocks:
+                logging.warning("Unsupported block %s in %s; rendering it as air.",
+                                k, self.regiondir)
+                self._unrecognized_blocks.add(k)
 
         return chunk_data
 
