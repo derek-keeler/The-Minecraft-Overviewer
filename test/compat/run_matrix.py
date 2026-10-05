@@ -32,7 +32,6 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST_NAME = "manifest.json"  # must match render_test.py
-ALL_DIMENSIONS = ["overworld", "nether", "end"]
 DEFAULT_UBUNTU = ["22.04", "24.04", "26.04"]
 ENGINES = ["docker", "podman"]
 
@@ -192,7 +191,7 @@ def describe_world(cfg, name):
 
 def add_world(cfg, name, source=None):
     src = source or os.path.join(cfg["saves_dir"], name)
-    version, dims = detect_world_info(src)
+    version, available = detect_world_info(src)
     print("\n  %s" % name)
     version = ask("    Minecraft version (client jar to texture with)", version)
     while not version:
@@ -200,10 +199,23 @@ def add_world(cfg, name, source=None):
     if not os.path.isfile(jar_path(cfg, version)):
         print("    warning: %s not found; install that client version before running"
               % jar_path(cfg, version))
-    answer = ask("    Dimensions to render (%s)" % "/".join(ALL_DIMENSIONS),
-                 ", ".join(dims))
-    dims = [d for d in answer.replace(",", " ").split() if d in ALL_DIMENSIONS]
-    entry = {"mc_version": version, "dimensions": dims or ["overworld"]}
+    # Only offer dimensions that have region data: rendering one without any
+    # produces no tiles, which the worker counts as a failure.
+    if len(available) == 1:
+        print("    Dimensions: overworld (the only one with region data)")
+        dims = available
+    else:
+        while True:
+            answer = ask("    Dimensions to render (%s)" % "/".join(available),
+                         ", ".join(available))
+            picked = answer.replace(",", " ").split()
+            dims = [d for d in available if d in picked]
+            unknown = [d for d in picked if d not in available]
+            if unknown:
+                print("    not available in this world: %s" % ", ".join(unknown))
+            elif dims:
+                break
+    entry = {"mc_version": version, "dimensions": dims}
     if source:
         entry["path"] = source
     cfg["worlds"][name] = entry
