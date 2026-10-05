@@ -201,6 +201,22 @@ class BlockstateTests(unittest.TestCase):
                 })
                 self.assertIn(converted, textures.blockmap_generators)
 
+    def test_dried_ghast_states_have_registered_renderers(self):
+        for facing in ("north", "east", "south", "west"):
+            for hydration in range(4):
+                for waterlogged in ("false", "true"):
+                    properties = {
+                        "facing": facing,
+                        "hydration": str(hydration),
+                        "waterlogged": waterlogged,
+                    }
+                    with self.subTest(properties=properties):
+                        converted = self.rset._get_block({
+                            "id": "minecraft:dried_ghast",
+                            "properties": properties,
+                        })
+                        self.assertIn(converted, textures.blockmap_generators)
+
 
 class SpawnTests(unittest.TestCase):
     def test_spawn_uses_absolute_section_y_and_yzx_array_order(self):

@@ -1455,6 +1455,7 @@ class RegionSet(object):
             'minecraft:red_shrub': (12915, 0),
             'minecraft:shelf_mushroom': (12916, 0),
             'minecraft:straw_bed': (12917, 0),
+            'minecraft:dried_ghast': (12918, 0),
 
             'minecraft:conduit': (1255, 0),
             'minecraft:sniffer_egg': (1256, 0),
@@ -2228,6 +2229,10 @@ class RegionSet(object):
         elif key == 'minecraft:shelf_mushroom':
             data = ['south', 'west', 'north', 'east'].index(properties['facing'])
             data |= int(properties['age']) << 2
+
+        elif key == 'minecraft:dried_ghast':
+            data = ['north', 'east', 'south', 'west'].index(properties['facing'])
+            data |= int(properties['hydration']) << 2
 
         return (block, data)
 

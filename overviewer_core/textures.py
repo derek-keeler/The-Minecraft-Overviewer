@@ -7816,6 +7816,39 @@ def straw_bed(self, blockid, data):
     return self.build_full_block((top, 12), None, None, side, side)
 
 
+@material(blockid=12918, data=list(range(16)), transparent=True, solid=True, nospawn=True)
+def dried_ghast(self, blockid, data):
+    hydration = data >> 2
+    direction = ((data & 3) + self.rotation) % 4
+    prefix = BLOCKTEXTURE + "dried_ghast_hydration_%d_" % hydration
+
+    faces = deque([
+        self.load_image_texture(prefix + "north.png"),
+        self.load_image_texture(prefix + "east.png"),
+        self.load_image_texture(prefix + "south.png"),
+        self.load_image_texture(prefix + "west.png"),
+    ])
+    faces.rotate(-direction)
+
+    def centered_face(texture):
+        face = Image.new("RGBA", (16, 16), self.bgcolor)
+        alpha_over(face, texture.crop((0, 0, 10, 10)), (3, 6))
+        return face
+
+    top = Image.new("RGBA", (16, 16), self.bgcolor)
+    top_texture = self.load_image_texture(prefix + "top.png")
+    alpha_over(top, top_texture.crop((0, 0, 10, 10)), (3, 3))
+    top = top.rotate(270 * direction)
+
+    return self.build_full_block(
+        (top, 6),
+        centered_face(faces[0]),
+        centered_face(faces[1]),
+        centered_face(faces[3]),
+        centered_face(faces[2]),
+    )
+
+
 sprite(blockid=11385, imagename=BLOCKTEXTURE + "oak_sapling.png")
 sprite(blockid=11386, imagename=BLOCKTEXTURE + "spruce_sapling.png")
 sprite(blockid=11387, imagename=BLOCKTEXTURE + "birch_sapling.png")
