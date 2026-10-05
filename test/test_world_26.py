@@ -165,6 +165,42 @@ class BlockstateTests(unittest.TestCase):
                     textures.BLOCKTEXTURE + "sulfur_spike_%s_%s.png" % (direction, thickness))
                 self.assertIsNotNone(image)
 
+    def test_26_3_blocks_have_registered_renderers(self):
+        colors = (
+            "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+            "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black",
+        )
+        names = {
+            "minecraft:%s_%s_%s" % (color, material, shape)
+            for color in colors
+            for material in ("wool", "concrete")
+            for shape in ("slab", "stairs")
+        }
+        names.update({
+            "minecraft:orange_poplar_leaves", "minecraft:poplar_button",
+            "minecraft:poplar_door", "minecraft:poplar_fence",
+            "minecraft:poplar_fence_gate", "minecraft:poplar_hanging_sign",
+            "minecraft:poplar_log", "minecraft:poplar_planks",
+            "minecraft:poplar_pressure_plate", "minecraft:poplar_sapling",
+            "minecraft:poplar_shelf", "minecraft:poplar_sign",
+            "minecraft:poplar_slab", "minecraft:poplar_stairs",
+            "minecraft:poplar_trapdoor", "minecraft:poplar_wall_hanging_sign",
+            "minecraft:poplar_wall_sign", "minecraft:poplar_wood",
+            "minecraft:potted_poplar_sapling", "minecraft:red_poplar_leaves",
+            "minecraft:stripped_poplar_log", "minecraft:stripped_poplar_wood",
+            "minecraft:yellow_poplar_leaves", "minecraft:red_shrub",
+            "minecraft:shelf_mushroom", "minecraft:straw_bed",
+        })
+        self.assertEqual(len(names), 90)
+
+        for name in names:
+            with self.subTest(name=name):
+                converted = self.rset._get_block({
+                    "id": name,
+                    "properties": DEFAULT_BLOCK_PROPERTIES.get(name, {}),
+                })
+                self.assertIn(converted, textures.blockmap_generators)
+
 
 class SpawnTests(unittest.TestCase):
     def test_spawn_uses_absolute_section_y_and_yzx_array_order(self):

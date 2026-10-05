@@ -965,7 +965,7 @@ def dirt_blocks(self, blockid, data):
     return self.build_block(top_img, side_img)
 
 # wooden planks
-@material(blockid=5, data=list(range(12)), solid=True)
+@material(blockid=5, data=list(range(13)), solid=True)
 def wooden_planks(self, blockid, data):
     if data == 0: # normal
         return self.build_block(self.load_image_texture(BLOCKTEXTURE + "oak_planks.png"), self.load_image_texture(BLOCKTEXTURE + "oak_planks.png"))
@@ -991,6 +991,8 @@ def wooden_planks(self, blockid, data):
         return self.build_block(self.load_image_texture(BLOCKTEXTURE + "bamboo_planks.png"),self.load_image_texture(BLOCKTEXTURE + "bamboo_planks.png"))
     if data == 11: # pale oak
         return self.build_block(self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png"),self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png"))
+    if data == 12: # poplar
+        return self.build_block(self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png"),self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png"))
 
 @material(blockid=6, data=list(range(16)), transparent=True)
 def saplings(self, blockid, data):
@@ -1074,7 +1076,7 @@ def sand_blocks(self, blockid, data):
 
 @material(blockid=[17, 162, 11306, 11307, 11308,
                     11309, 11310, 11311, 1008, 1009, 
-                    1126, 1192, 1201, 1210],
+                    1126, 1192, 1201, 1210, 12900],
           data=list(range(12)), solid=True)
 def wood(self, blockid, data):
     # extract orientation and wood type frorm data bits
@@ -1165,6 +1167,12 @@ def wood(self, blockid, data):
             1: ("stripped_bamboo_block_top.png", "stripped_bamboo_block.png"),
             2: ("bamboo_mosaic.png", None)
         },
+        12900: {
+            0: ("poplar_log_top.png", "poplar_log.png"),
+            1: ("stripped_poplar_log_top.png", "stripped_poplar_log.png"),
+            2: ("poplar_log.png", None),
+            3: ("stripped_poplar_log.png", None),
+        },
     }
 
     top_f, side_f = wood_tex[blockid].get(wood_type, wood_tex[blockid][0])
@@ -1204,6 +1212,12 @@ def leaves(self, blockid, data):
         t = self.load_image_texture(BLOCKTEXTURE + "cherry_leaves.png")
     elif data == 10:
         t = self.load_image_texture(BLOCKTEXTURE + "pale_oak_leaves.png")
+    elif data == 11:
+        t = self.load_image_texture(BLOCKTEXTURE + "red_poplar_leaves.png")
+    elif data == 12:
+        t = self.load_image_texture(BLOCKTEXTURE + "orange_poplar_leaves.png")
+    elif data == 13:
+        t = self.load_image_texture(BLOCKTEXTURE + "yellow_poplar_leaves.png")
 
     return self.build_block(t, t)
 
@@ -1725,10 +1739,13 @@ def dripleaf(self, blockid, data):
 # these wooden slabs are unobtainable without cheating, they are still
 # here because lots of pre-1.3 worlds use this blocks, add prismarine slabs
 @material(blockid=[43, 44, 181, 182, 204, 205, 1124, 1194, 1203, 1213, 1214] + list(range(11340, 11359)) +
-          list(range(1027, 1030)) + list(range(1072, 1080)) + list(range(1103, 1107)) + [12665, 12668, 12672, 1130, 1148],
+          list(range(1027, 1030)) + list(range(1072, 1080)) + list(range(1103, 1107)) +
+          list(range(12810, 12826)) + list(range(12850, 12866)) +
+          [12665, 12668, 12672, 1130, 1148, 12902],
           data=list(range(16)),
           transparent=[44, 182, 205, 1124, 1194, 1203, 1213, 1214] + list(range(11340, 11359)) + list(range(1027, 1030)) +
-          list(range(1072, 1080)) + list(range(1103, 1107)) + [12665, 12668, 12672, 1130, 1148], solid=True)
+          list(range(1072, 1080)) + list(range(1103, 1107)) + list(range(12810, 12826)) +
+          list(range(12850, 12866)) + [12665, 12668, 12672, 1130, 1148, 12902], solid=True)
 def slabs(self, blockid, data):
     if blockid == 44 or blockid == 182: 
         texture = data & 7
@@ -1835,6 +1852,14 @@ def slabs(self, blockid, data):
         top = side = self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png").copy()
     elif blockid == 1148: # resin brick slab
         top = side = self.load_image_texture(BLOCKTEXTURE + "resin_bricks.png").copy()
+    elif blockid == 12902: # poplar slab
+        top = side = self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png").copy()
+    elif blockid in range(12810, 12826):
+        top = side = self.load_image_texture(
+            BLOCKTEXTURE + "%s_wool.png" % color_map[blockid - 12810]).copy()
+    elif blockid in range(12850, 12866):
+        top = side = self.load_image_texture(
+            BLOCKTEXTURE + "%s_concrete.png" % color_map[blockid - 12850]).copy()
     elif blockid in range(1072, 1080):
         copper_tex = {
             1072: BLOCKTEXTURE + "cut_copper.png",
@@ -2124,7 +2149,8 @@ def fire(self, blockid, data):
                    11337, 11338, 11339, 11370, 11371, 11374, 11375, 11376, 11377, 11378, 11379,
                    11380, 11381, 11382, 11383, 11384, 11415, 1030, 1031, 1032, 1064, 1065, 1066,
                    1067, 1068, 1069, 1070, 1071, 1099, 1100, 1101, 1102, 1193, 1202, 1211, 1212, 1224,
-                   12664, 12667, 12671, 1131, 1147],
+                   12664, 12667, 12671, 1131, 1147, 12903] +
+                   list(range(12830, 12846)) + list(range(12870, 12886)),
           data=list(range(128)), transparent=True, solid=True, nospawn=True)
 def stairs(self, blockid, data):
     # preserve the upside-down bit
@@ -2211,7 +2237,15 @@ def stairs(self, blockid, data):
 
         # Resin brick
         1147: BLOCKTEXTURE + "resin_bricks.png",
+        12903: BLOCKTEXTURE + "poplar_planks.png",
     }
+
+    if blockid in range(12830, 12846):
+        stair_id_to_tex[blockid] = (
+            BLOCKTEXTURE + "%s_wool.png" % color_map[blockid - 12830])
+    elif blockid in range(12870, 12886):
+        stair_id_to_tex[blockid] = (
+            BLOCKTEXTURE + "%s_concrete.png" % color_map[blockid - 12870])
 
     texture = self.load_image_texture(stair_id_to_tex[blockid]).copy()
 
@@ -3074,7 +3108,7 @@ def farmland(self, blockid, data):
     return self.build_full_block((top, 1), side, side, side, side)
 
 # signposts
-@material(blockid=[63,11401,11402,11403,11404,11405,11406,12505,12506,12512,12513,12514,1139], data=list(range(16)), transparent=True)
+@material(blockid=[63,11401,11402,11403,11404,11405,11406,12505,12506,12512,12513,12514,1139,12910], data=list(range(16)), transparent=True)
 def signpost(self, blockid, data):
 
     # first rotations
@@ -3100,6 +3134,7 @@ def signpost(self, blockid, data):
         12513: ("cherry_planks.png", "cherry_log.png"),
         12514: ("bamboo_planks.png", "bamboo_planks.png"),
         1139: ("pale_oak_planks.png", "pale_oak_log.png"),
+        12910: ("poplar_planks.png", "poplar_log.png"),
     }
     texture_path, texture_stick_path = [BLOCKTEXTURE + "" + x for x in sign_texture[blockid]]
     
@@ -3154,7 +3189,7 @@ def signpost(self, blockid, data):
 
 # wooden and iron door
 # uses pseudo-ancildata found in iterate.c
-@material(blockid=[64, 71, 193, 194, 195, 196, 197, 499, 500, 1197, 1206, 1217, 12654, 12655, 12656, 12657, 1136], data=list(range(32)), transparent=True)
+@material(blockid=[64, 71, 193, 194, 195, 196, 197, 499, 500, 1197, 1206, 1217, 12654, 12655, 12656, 12657, 1136, 12908], data=list(range(32)), transparent=True)
 def door(self, blockid, data):
     #Masked to not clobber block top/bottom & swung info
     if self.rotation == 1:
@@ -3201,6 +3236,8 @@ def door(self, blockid, data):
             raw_door = self.load_image_texture(BLOCKTEXTURE + "bamboo_door_top.png")
         elif blockid == 1136: # pale oak
             raw_door = self.load_image_texture(BLOCKTEXTURE + "pale_oak_door_top.png")
+        elif blockid == 12908: # poplar
+            raw_door = self.load_image_texture(BLOCKTEXTURE + "poplar_door_top.png")
 
         elif blockid == 12654: # copper door
             raw_door = self.load_image_texture(BLOCKTEXTURE + "copper_door_top.png")
@@ -3238,6 +3275,8 @@ def door(self, blockid, data):
             raw_door = self.load_image_texture(BLOCKTEXTURE + "bamboo_door_bottom.png")
         elif blockid == 1136: # pale oak
             raw_door = self.load_image_texture(BLOCKTEXTURE + "pale_oak_door_bottom.png")
+        elif blockid == 12908: # poplar
+            raw_door = self.load_image_texture(BLOCKTEXTURE + "poplar_door_bottom.png")
 
         elif blockid == 12654: # copper door
             raw_door = self.load_image_texture(BLOCKTEXTURE + "copper_door_bottom.png")
@@ -3389,7 +3428,7 @@ def ladder(self, blockid, data):
         return img
 
 # wall signs
-@material(blockid=[68,11407,11408,11409,11410,11411,11412,12507,12508,12509,12510,12511, 1138], data=[2, 3, 4, 5], transparent=True)
+@material(blockid=[68,11407,11408,11409,11410,11411,11412,12507,12508,12509,12510,12511,1138,12911], data=[2, 3, 4, 5], transparent=True)
 def wall_sign(self, blockid, data): # wall sign
 
     # first rotations
@@ -3423,6 +3462,7 @@ def wall_sign(self, blockid, data): # wall sign
         12510: "cherry_planks.png",
         12511: "bamboo_planks.png",
         1138: "pale_oak_planks.png",
+        12911: "poplar_planks.png",
     }
     texture_path = BLOCKTEXTURE + "" + sign_texture[blockid]
     texture = self.load_image_texture(texture_path).copy()
@@ -3460,7 +3500,7 @@ def wall_sign(self, blockid, data): # wall sign
 
     return img
 
-@material(blockid=list(range(12600,12612)), data=[2, 3, 4, 5], transparent=True)
+@material(blockid=list(range(12600,12612)) + [12912], data=[2, 3, 4, 5], transparent=True)
 def hanging_wall_sign(self, blockid, data):
 
     # first rotations
@@ -3493,6 +3533,7 @@ def hanging_wall_sign(self, blockid, data):
         12609: "cherry.png",
         12610: "bamboo.png",
         12611: "pale_oak.png",
+        12912: "poplar.png",
     }
 
     texture = self.load_sign_texture(sign_texture[blockid][:-4], hanging=True)
@@ -3566,7 +3607,7 @@ def hanging_wall_sign(self, blockid, data):
 
     return img
 
-@material(blockid=list(range(12620, 12632)), data=list(range(32)), transparent=True)
+@material(blockid=list(range(12620, 12632)) + [12913], data=list(range(32)), transparent=True)
 def hanging_sign(self, blockid, data):
 
     attached = (data & 0b10000) == 0b10000
@@ -3594,6 +3635,7 @@ def hanging_sign(self, blockid, data):
         12629: "cherry.png",
         12630: "bamboo.png",
         12631: "pale_oak.png",
+        12913: "poplar.png",
     }
 
     full_texture = self.load_sign_texture(sign_texture[blockid][:-4], hanging=True)
@@ -3781,7 +3823,7 @@ def levers(self, blockid, data):
     return img
 
 # wooden and stone pressure plates, and weighted pressure plates
-@material(blockid=[70, 72,147,148,11301,11302,11303,11304,11305, 1033,11517,11518, 1199, 1208, 1219, 1132], data=[0,1], transparent=True)
+@material(blockid=[70, 72,147,148,11301,11302,11303,11304,11305, 1033,11517,11518, 1199, 1208, 1219, 1132, 12904], data=[0,1], transparent=True)
 def pressure_plate(self, blockid, data):
     texture_name = {70:BLOCKTEXTURE + "stone.png",              # stone
                     72:BLOCKTEXTURE + "oak_planks.png",         # oak
@@ -3800,6 +3842,7 @@ def pressure_plate(self, blockid, data):
                     1208:BLOCKTEXTURE + "cherry_planks.png",    # cherry
                     1219:BLOCKTEXTURE + "bamboo_planks.png",    # bamboo
                     1132:BLOCKTEXTURE + "pale_oak_planks.png",  # pale oak
+                    12904:BLOCKTEXTURE + "poplar_planks.png",   # poplar
 
                    }[blockid]
     t = self.load_image_texture(texture_name).copy()
@@ -3828,12 +3871,18 @@ def pressure_plate(self, blockid, data):
     return img
 
 # stone and wood buttons
-@material(blockid=(77,143,11326,11327,11328,11329,11330,1034,11515,11516, 1200, 1209, 1220, 1133), data=list(range(16)), transparent=True)
+@material(blockid=(77,143,11326,11327,11328,11329,11330,1034,11515,11516, 1200, 1209, 1220, 1133, 12905), data=list(range(18)), transparent=True)
 def buttons(self, blockid, data):
 
     # 0x8 is set if the button is pressed mask this info and render
     # it as unpressed
-    data = data & 0x7
+    ceiling = data >= 16
+    if ceiling:
+        data -= 16
+        if self.rotation in (1, 3):
+            data = 1 - data
+    else:
+        data = data & 0x7
 
     if self.rotation == 1:
         if data == 1: data = 3
@@ -3870,6 +3919,7 @@ def buttons(self, blockid, data):
                    1209:BLOCKTEXTURE + "cherry_planks.png",
                    1220:BLOCKTEXTURE + "bamboo_planks.png",
                    1133:BLOCKTEXTURE + "pale_oak_planks.png",
+                   12905:BLOCKTEXTURE + "poplar_planks.png",
                   }[blockid]
     t = self.load_image_texture(texturepath).copy()
 
@@ -3881,7 +3931,10 @@ def buttons(self, blockid, data):
 
     img = Image.new("RGBA", (24,24), self.bgcolor)
 
-    if data < 5:
+    if ceiling:
+        button = self.transform_image_top(t if data == 0 else t.rotate(90))
+        alpha_over(img, button, (0, 0), button)
+    elif data < 5:
         button = self.transform_image_side(t)
 
         if data == 1: # facing SOUTH
@@ -4078,7 +4131,7 @@ def jukebox(self, blockid, data):
     return self.build_block(self.load_image_texture(BLOCKTEXTURE + "jukebox_top.png"), self.load_image_texture(BLOCKTEXTURE + "note_block.png"))
 
 # nether and normal fences
-@material(blockid=[85, 188, 189, 190, 191, 192, 113, 511, 512, 1195, 1204, 1215, 1134], data=list(range(16)), transparent=True, nospawn=True)
+@material(blockid=[85, 188, 189, 190, 191, 192, 113, 511, 512, 1195, 1204, 1215, 1134, 12906], data=list(range(16)), transparent=True, nospawn=True)
 def fence(self, blockid, data):
     # create needed images for Big stick fence
     if blockid == 85: # normal fence
@@ -4130,6 +4183,10 @@ def fence(self, blockid, data):
         fence_top = self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png").copy()
         fence_side = self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png").copy()
         fence_small_side = self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png").copy()
+    elif blockid == 12906: # poplar fence
+        fence_top = self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png").copy()
+        fence_side = self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png").copy()
+        fence_small_side = self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png").copy()
     else: # netherbrick fence
         fence_top = self.load_image_texture(BLOCKTEXTURE + "nether_bricks.png").copy()
         fence_side = self.load_image_texture(BLOCKTEXTURE + "nether_bricks.png").copy()
@@ -4638,7 +4695,7 @@ def comparator(self, blockid, data):
     
 # trapdoor
 # the trapdoor is looks like a sprite when opened, that's not good
-@material(blockid=[96,167,11332,11333,11334,11335,11336,12501,12502, 1198, 1207, 1218, 1231, 12658, 12659, 12660, 12661, 1137],
+@material(blockid=[96,167,11332,11333,11334,11335,11336,12501,12502, 1198, 1207, 1218, 1231, 12658, 12659, 12660, 12661, 1137, 12909],
           data=list(range(16)), transparent=True, nospawn=True)
 def trapdoor(self, blockid, data):
 
@@ -4680,7 +4737,8 @@ def trapdoor(self, blockid, data):
                    12658: BLOCKTEXTURE + "copper_trapdoor.png",
                    12659: BLOCKTEXTURE + "exposed_copper_trapdoor.png",
                    12660: BLOCKTEXTURE + "weathered_copper_trapdoor.png",
-                   12661: BLOCKTEXTURE + "oxidized_copper_trapdoor.png"
+                   12661: BLOCKTEXTURE + "oxidized_copper_trapdoor.png",
+                   12909: BLOCKTEXTURE + "poplar_trapdoor.png",
 
                   }[blockid]
 
@@ -4947,7 +5005,7 @@ def vines(self, blockid, data):
     return self.build_full_block(side_up, side_north, side_east, side_west, side_south)
 
 # fence gates
-@material(blockid=[107, 183, 184, 185, 186, 187, 513, 514, 1196, 1205, 1216, 1135], data=list(range(8)), transparent=True, nospawn=True)
+@material(blockid=[107, 183, 184, 185, 186, 187, 513, 514, 1196, 1205, 1216, 1135, 12907], data=list(range(8)), transparent=True, nospawn=True)
 def fence_gate(self, blockid, data):
 
     # rotation
@@ -4999,6 +5057,8 @@ def fence_gate(self, blockid, data):
         gate_side = self.load_image_texture(BLOCKTEXTURE + "bamboo_planks.png").copy()
     elif blockid == 1135: # Pale Oak
         gate_side = self.load_image_texture(BLOCKTEXTURE + "pale_oak_planks.png").copy()
+    elif blockid == 12907: # Poplar
+        gate_side = self.load_image_texture(BLOCKTEXTURE + "poplar_planks.png").copy()
     else:
         return None
 
@@ -7594,7 +7654,7 @@ def test_block(self, _, data):
     tex = self.load_image_texture(BLOCKTEXTURE + 'test_block_' + ['start','accept','fail','log'][data] + '.png')
     return self.build_block(tex, tex)
 
-@material(blockid=list(range(12700, 12712)), data=list(range(0b111)), transparent=True)
+@material(blockid=list(range(12700, 12713)), data=list(range(0b1000)), transparent=True)
 def shelf(self, block_id, data):
     texmap = {
         12700: 'oak_shelf',
@@ -7609,6 +7669,7 @@ def shelf(self, block_id, data):
         12709: 'cherry_shelf',
         12710: 'bamboo_shelf',
         12711: 'pale_oak_shelf',
+        12712: 'poplar_shelf',
     }
 
     tex = self.load_image(BLOCKTEXTURE + texmap[block_id] + '.png')
@@ -7680,6 +7741,81 @@ def shelf(self, block_id, data):
     return block
 
 
+@material(blockid=12914, data=[0], transparent=True)
+def potted_poplar_sapling(self, blockid, data):
+    plant = self.build_sprite(
+        self.load_image_texture(BLOCKTEXTURE + "poplar_sapling.png"))
+
+    pot_texture = self.load_image_texture(BLOCKTEXTURE + "flower_pot.png").copy()
+    ImageDraw.Draw(pot_texture).rectangle(
+        (0, 0, 15, 9), outline=(0, 0, 0, 0), fill=(0, 0, 0, 0))
+    pot = self.build_full_block(
+        (pot_texture, 12), None, None, pot_texture, pot_texture)
+
+    result = Image.new("RGBA", (24, 24), self.bgcolor)
+    alpha_over(result, plant, (0, -3), plant)
+    alpha_over(result, pot, (0, 0), pot)
+    return result
+
+
+@material(blockid=12916, data=list(range(8)), transparent=True)
+def shelf_mushroom(self, blockid, data):
+    age = data >> 2
+    direction = ((data & 3) + self.rotation) % 4
+    texture = self.load_image(
+        BLOCKTEXTURE + "shelf_mushroom_stage%d.png" % age).resize(
+            (32, 32), Image.LANCZOS)
+    if age == 0:
+        top_crop, bottom_crop = (10, 0, 20, 12), (12, 12, 20, 20)
+        top_position, bottom_position = (3, 4), (4, 10)
+    else:
+        top_crop, bottom_crop = (4, 0, 28, 20), (8, 20, 24, 28)
+        top_position, bottom_position = (2, 0), (4, 9)
+
+    face = Image.new("RGBA", (16, 16), self.bgcolor)
+    top = texture.crop(top_crop).resize(
+        (16 - 2 * top_position[0], 16 - top_position[1]), Image.LANCZOS)
+    bottom = texture.crop(bottom_crop).resize(
+        (16 - 2 * bottom_position[0], 16 - bottom_position[1]), Image.LANCZOS)
+    alpha_over(face, top, top_position, top)
+    alpha_over(face, bottom, bottom_position, bottom)
+
+    if direction == 0:
+        return self.build_full_block(None, face, None, None, None)
+    if direction == 1:
+        return self.build_full_block(None, None, face, None, None)
+    if direction == 2:
+        return self.build_full_block(None, None, None, None, face)
+    return self.build_full_block(None, None, None, face, None)
+
+
+@material(blockid=12917, data=list(range(16)), transparent=True, nospawn=True)
+def straw_bed(self, blockid, data):
+    direction = ((data & 3) + self.rotation) % 4
+    part = "head" if data & 8 else "foot"
+    texture = self.load_image(BLOCKTEXTURE + "straw_bed.png").resize(
+        (64, 64), Image.LANCZOS)
+
+    if part == "foot":
+        top = texture.crop((16, 25, 32, 41))
+        top = top.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.FLIP_TOP_BOTTOM)
+    else:
+        pillow = texture.crop((8, 0, 24, 8))
+        pillow = pillow.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.FLIP_TOP_BOTTOM)
+        base = texture.crop((8, 13, 24, 21))
+        base = base.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.FLIP_TOP_BOTTOM)
+        top = Image.new("RGBA", (16, 16), self.bgcolor)
+        alpha_over(top, pillow.resize((16, 8), Image.NEAREST), (0, 0))
+        alpha_over(top, base.resize((16, 8), Image.NEAREST), (0, 8))
+
+    top = top.rotate((180, 90, 0, 270)[direction])
+    side_texture = self.load_image_texture(
+        BLOCKTEXTURE + "straw_bed_particle.png")
+    side = Image.new("RGBA", (16, 16), self.bgcolor)
+    alpha_over(side, side_texture.crop((0, 12, 16, 16)), (0, 12))
+    return self.build_full_block((top, 12), None, None, side, side)
+
+
 sprite(blockid=11385, imagename=BLOCKTEXTURE + "oak_sapling.png")
 sprite(blockid=11386, imagename=BLOCKTEXTURE + "spruce_sapling.png")
 sprite(blockid=11387, imagename=BLOCKTEXTURE + "birch_sapling.png")
@@ -7690,6 +7826,8 @@ sprite(blockid=1140, imagename=BLOCKTEXTURE + "pale_oak_sapling.png")
 sprite(blockid=11413, imagename=BLOCKTEXTURE + "bamboo_stage0.png")
 sprite(blockid=1233, imagename=BLOCKTEXTURE + "mangrove_propagule.png")
 sprite(blockid=1234, imagename=BLOCKTEXTURE + "cherry_sapling.png")
+sprite(blockid=12901, imagename=BLOCKTEXTURE + "poplar_sapling.png")
+sprite(blockid=12915, imagename=BLOCKTEXTURE + "red_shrub.png")
 sprite(blockid=30, imagename=BLOCKTEXTURE + "cobweb.png", nospawn=True)
 sprite(blockid=37, imagename=BLOCKTEXTURE + "dandelion.png")
 sprite(blockid=39, imagename=BLOCKTEXTURE + "brown_mushroom.png")

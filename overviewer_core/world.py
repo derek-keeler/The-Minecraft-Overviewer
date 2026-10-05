@@ -1431,6 +1431,30 @@ class RegionSet(object):
             'minecraft:cherry_shelf': (12709, 0),
             'minecraft:bamboo_shelf': (12710, 0),
             'minecraft:pale_oak_shelf': (12711, 0),
+            'minecraft:poplar_shelf': (12712, 0),
+
+            # 26.3
+            'minecraft:poplar_log': (12900, 0),
+            'minecraft:stripped_poplar_log': (12900, 1),
+            'minecraft:poplar_wood': (12900, 2),
+            'minecraft:stripped_poplar_wood': (12900, 3),
+            'minecraft:poplar_sapling': (12901, 0),
+            'minecraft:poplar_slab': (12902, 0),
+            'minecraft:poplar_stairs': (12903, 0),
+            'minecraft:poplar_pressure_plate': (12904, 0),
+            'minecraft:poplar_button': (12905, 0),
+            'minecraft:poplar_fence': (12906, 0),
+            'minecraft:poplar_fence_gate': (12907, 0),
+            'minecraft:poplar_door': (12908, 0),
+            'minecraft:poplar_trapdoor': (12909, 0),
+            'minecraft:poplar_sign': (12910, 0),
+            'minecraft:poplar_wall_sign': (12911, 0),
+            'minecraft:poplar_wall_hanging_sign': (12912, 0),
+            'minecraft:poplar_hanging_sign': (12913, 0),
+            'minecraft:potted_poplar_sapling': (12914, 0),
+            'minecraft:red_shrub': (12915, 0),
+            'minecraft:shelf_mushroom': (12916, 0),
+            'minecraft:straw_bed': (12917, 0),
 
             'minecraft:conduit': (1255, 0),
             'minecraft:sniffer_egg': (1256, 0),
@@ -1457,6 +1481,7 @@ class RegionSet(object):
             'minecraft:player_wall_head': (1283, 0),
 
             'minecraft:pale_oak_planks': (5, 11),
+            'minecraft:poplar_planks': (5, 12),
             'minecraft:pale_oak_slab': (1130, 0),
             'minecraft:pale_oak_stairs': (1131, 0),
             'minecraft:pale_oak_pressure_plate': (1132, 0),
@@ -1507,6 +1532,16 @@ class RegionSet(object):
             self._blockmap['minecraft:%s_concrete_powder'    % colors[i]] = (252, i)
             self._blockmap['minecraft:%s_candle'             % colors[i]] = (1265, i)
             self._blockmap['minecraft:%s_candle_cake'        % colors[i]] = (1264, i)
+            self._blockmap['minecraft:%s_wool_slab'          % colors[i]] = (12810 + i, 0)
+            self._blockmap['minecraft:%s_wool_stairs'        % colors[i]] = (12830 + i, 0)
+            self._blockmap['minecraft:%s_concrete_slab'      % colors[i]] = (12850 + i, 0)
+            self._blockmap['minecraft:%s_concrete_stairs'    % colors[i]] = (12870 + i, 0)
+
+        self._blockmap.update({
+            'minecraft:red_poplar_leaves': (161, 11),
+            'minecraft:orange_poplar_leaves': (161, 12),
+            'minecraft:yellow_poplar_leaves': (161, 13),
+        })
 
         coral_list = [ 'tube', 'brain', 'bubble', 'fire', 'horn']
         for i in range(len(coral_list)):
@@ -1541,7 +1576,7 @@ class RegionSet(object):
                       'minecraft:acacia_slab', 'minecraft:dark_oak_slab', 'minecraft:petrified_oak_slab',
                       'minecraft:crimson_slab', 'minecraft:warped_slab', 'minecraft:mangrove_slab',
                       'minecraft:cherry_slab', 'minecraft:bamboo_slab', 'minecraft:bamboo_mosaic_slab',
-                      'minecraft:pale_oak_slab')
+                      'minecraft:pale_oak_slab', 'minecraft:poplar_slab')
         stone_slabs = ('minecraft:stone_slab', 'minecraft:sandstone_slab','minecraft:red_sandstone_slab',
                         'minecraft:cobblestone_slab', 'minecraft:brick_slab','minecraft:purpur_slab',
                         'minecraft:stone_brick_slab', 'minecraft:nether_brick_slab',
@@ -1630,10 +1665,17 @@ class RegionSet(object):
             'minecraft:bamboo_slab': 'minecraft:bamboo_planks',
             'minecraft:bamboo_mosaic_slab': 'minecraft:bamboo_mosaic',
             'minecraft:pale_oak_slab': 'minecraft:pale_oak_planks',
+            'minecraft:poplar_slab': 'minecraft:poplar_planks',
         }
 
         colors = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan',
                   'purple', 'blue', 'brown', 'green', 'red', 'black']
+
+        colored_slabs = tuple(
+            'minecraft:%s_%s_slab' % (color, material)
+            for material in ('wool', 'concrete')
+            for color in colors
+        )
         
         coral_list = [ 'tube', 'brain', 'bubble', 'fire', 'horn']
 
@@ -1697,7 +1739,7 @@ class RegionSet(object):
         elif key in ['minecraft:small_dripleaf', 'minecraft:big_dripleaf', 'minecraft:big_dripleaf_stem']:
             facing = properties['facing']
             data = {'south': 0, 'west': 1, 'north': 2, 'east': 3}[facing]
-        elif key in wood_slabs + stone_slabs + prismarine_slabs + copper_slabs:
+        elif key in wood_slabs + stone_slabs + prismarine_slabs + copper_slabs + colored_slabs:
             # handle double slabs
             if properties['type'] == 'top':
                 data |= 0x08
@@ -1707,6 +1749,10 @@ class RegionSet(object):
                 block = 11358
                 data |= 1
             elif properties['type'] == 'double':
+                if key in colored_slabs:
+                    color, material = key[len('minecraft:'):-len('_slab')].rsplit('_', 1)
+                    (block, data) = self._blockmap['minecraft:%s_%s' % (color, material)]
+                    return (block, data)
                 # Not all wooden slabs are listed here. Block ID 125 has a 4 bit data field, one bit of which is used
                 # for top/bottom indication allowing only 8 distinct slab types. These are listed here. Everything else
                 # goes through the usual slab process.
@@ -1743,8 +1789,7 @@ class RegionSet(object):
             facing = properties['facing']
             face   = properties['face']
             if face == 'ceiling':
-                block = 0
-                data = 0
+                data = {'east': 17, 'west': 17, 'south': 16, 'north': 16}[facing]
             elif face == 'wall':
                 data = {'east': 1, 'west': 2, 'south': 3, 'north': 4}[facing]
             elif face == 'floor':
@@ -2168,7 +2213,8 @@ class RegionSet(object):
         elif key in ['minecraft:oak_shelf', 'minecraft:spruce_shelf', 'minecraft:birch_shelf',
                      'minecraft:jungle_shelf', 'minecraft:acacia_shelf', 'minecraft:dark_oak_shelf',
                      'minecraft:mangrove_shelf', 'minecraft:bamboo_shelf', 'minecraft:cherry_shelf',
-                     'minecraft:pale_oak_shelf', 'minecraft:crimson_shelf', 'minecraft:warped_shelf']:
+                     'minecraft:pale_oak_shelf', 'minecraft:crimson_shelf', 'minecraft:warped_shelf',
+                     'minecraft:poplar_shelf']:
             p = properties
             facing = p['facing']
             data = ['south', 'west', 'north', 'east'].index(facing)
@@ -2178,6 +2224,10 @@ class RegionSet(object):
 
             if p['waterlogged'] == 'true':
                 block = 8
+
+        elif key == 'minecraft:shelf_mushroom':
+            data = ['south', 'west', 'north', 'east'].index(properties['facing'])
+            data |= int(properties['age']) << 2
 
         return (block, data)
 
