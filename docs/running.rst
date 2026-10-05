@@ -52,8 +52,8 @@ Incremental updates are just as easy, and a lot faster. If you go and change
 something inside your world, run the command again and The Overviewer will
 automatically re-render only what's needed.
 
-Minecraft 26.x saves
--------------------
+Minecraft 26.3+ saves
+---------------------
 
 Use the world root containing ``level.dat``, not its ``region`` directory.
 Vanilla dimensions under ``dimensions\minecraft\overworld``,
@@ -62,26 +62,26 @@ with the existing ``overworld``, ``nether`` and ``end`` configuration values.
 Legacy ``region``, ``DIM-1`` and ``DIM1`` layouts remain supported. When both
 layouts contain a dimension, the converted namespaced layout takes precedence.
 
-26.3 block palettes may contain default-state strings, singleton empty-name
+26.3+ block palettes may contain default-state strings, singleton empty-name
 wrappers, and compounds using ``id``/``properties``. Overviewer expands these
-using the vanilla 26.3 default properties while preserving older
-``Name``/``Properties`` palettes. The bundled defaults require no Java
-installation at render time. Maintainers can regenerate them from Minecraft's
-``--reports`` output::
+using bundled vanilla default properties while preserving older
+``Name``/``Properties`` palettes. No Java installation or regeneration is
+needed to render a world. When adding support for a new Minecraft release,
+maintainers should generate its ``--reports`` ``reports/blocks.json`` and run
+the following command from the Overviewer source directory. Review the diff
+against the bundled defaults and commit the updated file if defaults changed::
 
-    python contrib\generateBlockstateDefaults.py reports\blocks.json overviewer_core\blockstate_defaults.py
+    python contrib/generateBlockstateDefaults.py reports/blocks.json overviewer_core/blockstate_defaults.py
 
 Save-format support does not imply complete coverage of every new block.
-The sulfur, cinnabar, potent sulfur and sulfur spike blocks are supported,
-along with sulfur caves and dappled forest biome colors. Unsupported blocks
-are logged and rendered as air; unsupported vanilla biomes report an explicit
-chunk error rather than an unrelated array error.
+Unsupported blocks are logged and rendered as air; unsupported vanilla biomes
+report an explicit chunk error rather than an unrelated array error.
 
-Use the 26.3 Minecraft client jar as ``texturepath``, even when rendering
-older saves, to supply the newly supported sulfur textures. Modern bed/sign
-layouts and relocated book/pillar textures are supported; older layouts are
-still recognized. Resource-pack precedence is preserved across renamed
-assets. For example, a 26.3 render configuration can include::
+Use a Minecraft client jar containing the assets needed for your render as
+``texturepath`` (for example, a 26.3 jar for newly supported 26.3 textures),
+even when rendering older saves. Modern bed/sign layouts and relocated
+book/pillar textures are supported; older layouts are still recognized.
+Resource-pack precedence is preserved across renamed assets. For example::
 
     texturepath = r"C:\Users\you\AppData\Roaming\.minecraft\versions\26.3\26.3.jar"
 

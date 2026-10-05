@@ -178,11 +178,16 @@ class Textures(object):
                 $HOME/Library/Application Support/minecraft/versions
             * at $HOME/.minecraft/versions/
 
-          Numeric release versions >=1.8 are searched newest first.
+          Numeric release versions >=1.8 are searched newest first, as they
+          were before this lookup was simplified. Older jars are not selected
+          automatically because they may lack expected assets; an explicitly
+          selected older jar only fails if a required texture is unavailable.
         
         """
-        # Alternative names are tried within each source before falling back to
-        # another pack, so renamed assets still respect texturepath precedence.
+        # Bundled assets (including Overviewer's water/lava images) take
+        # precedence, avoiding jar lookups for files supplied by Overviewer.
+        # Try renamed alternatives within each pack before the next source so
+        # texturepath keeps priority over automatically discovered jars.
         filenames = (filename,) if isinstance(filename, str) else filename
         programdir = util.get_program_path()
         sources = [os.path.join(programdir, "overviewer_core", "data", "textures")]

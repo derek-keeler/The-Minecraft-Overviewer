@@ -1,4 +1,7 @@
-"""Extract default properties from a Minecraft data generator blocks report."""
+"""Extract default properties from Minecraft's blocks report.
+
+See docs/running.rst (Minecraft 26.3+ saves) for when to regenerate this file.
+"""
 
 import argparse
 import json
@@ -12,7 +15,7 @@ def main():
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
     lines = [
-        "# Generated from the Minecraft Java Edition 26.3 blocks report.",
+        "# Generated from a Minecraft Java Edition blocks report.",
         "# Regenerate with contrib/generateBlockstateDefaults.py; do not edit by hand.",
         "",
         "DEFAULT_BLOCK_PROPERTIES = {",

@@ -32,6 +32,74 @@ Build Instructions For Various Operating Systems
 .. contents::
     :local:
 
+Linux
+-----
+
+You will need Python 3.10 or newer, the gcc compiler, and a working build
+environment. On Ubuntu and Debian, this can be done by installing the
+``build-essential`` package. The supported Ubuntu baselines are 22.04, 24.04,
+and 26.04, using their default Python 3 versions.
+
+On Debian-derived distributions (e.g. Ubuntu), install only Python, virtualenv,
+pip, Python headers, compiler tooling, and git from the package manager::
+
+    sudo apt-get update
+    sudo apt-get install python3 python3-dev python3-venv python3-pip build-essential git
+
+On Linux, create and activate a project virtual environment in Bash, then
+install Overviewer's Python dependencies from ``requirements.txt``::
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+
+Overviewer requires Pillow's source headers to build its C extension. Download
+or clone the Pillow source release that exactly matches the version of Pillow
+installed in the virtual environment, and point ``PIL_INCLUDE_DIR`` at its
+``src/libImaging`` directory. A version mismatch between the installed Pillow
+library and the headers can lead to compile failures or segfaults while running
+Overviewer due to an ABI mismatch::
+
+    PILLOW_VERSION=$(python -c "import PIL; print(PIL.__version__)")
+    git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git /tmp/pillow
+    export PIL_INCLUDE_DIR=/tmp/pillow/src/libImaging
+
+Then build::
+
+    python setup.py build
+
+At this point, you can run ``overviewer.py`` from the current directory while
+the virtual environment is activated::
+
+    python overviewer.py --config=/path/to/your/config
+
+
+macOS
+-----
+
+Install the Xcode Command Line Tools with ``xcode-select --install`` and
+Python 3.10 or newer from `python.org <https://www.python.org/downloads/macos/>`_
+if needed. From the Overviewer source directory, create a virtual environment
+and install its dependencies::
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+
+Download the `Pillow sources <https://github.com/python-pillow/Pillow>`_ matching
+the installed Pillow version, point ``PIL_INCLUDE_DIR`` at their ``src/libImaging``
+directory, and build::
+
+    PILLOW_VERSION=$(python -c "import PIL; print(PIL.__version__)")
+    git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git /tmp/pillow
+    export PIL_INCLUDE_DIR=/tmp/pillow/src/libImaging
+    python setup.py build
+
+Run Overviewer using the activated environment's ``python``.
+
+
 Windows Build Instructions
 --------------------------
 
@@ -119,7 +187,7 @@ This is the recommended way to build on Windows without MSVC.
 
 4. Close the msys2 shell. Instead, open the MinGW64 shell.
 
-5. Build the Overviewer by changing your current working directory into the source
+5. Build the Overviewer by changing your current working directory to the source
    directory and executing the build script::
 
     cd Minecraft-Overviewer
@@ -143,81 +211,3 @@ Building with mingw
 If the build fails with complaints about ``-mno-cygwin``, open the file ``Lib/distutils/cygwincompiler.py``
 in an editor of your choice, and remove all mentions of ``-mno-cygwin``. This is a bug in distutils,
 filed as `Issue 12641 <http://bugs.python.org/issue12641>`_.
-
-
-Linux
------
-
-You will need Python 3.10 or newer, the gcc compiler, and a working build
-environment. On Ubuntu and Debian, this can be done by installing the
-``build-essential`` package. The supported Ubuntu baselines are 22.04, 24.04,
-and 26.04, using their default Python 3 versions.
-
-On Debian-derived distributions (e.g. Ubuntu), install only Python, virtualenv,
-pip, Python headers, compiler tooling, and git from the package manager::
-
-    sudo apt-get update
-    sudo apt-get install python3 python3-dev python3-venv python3-pip build-essential git
-
-On Linux, create and activate a project virtual environment in Bash, then
-install Overviewer's Python dependencies from ``requirements.txt``::
-
-    python3 -m venv .venv
-    source .venv/bin/activate
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
-
-Overviewer requires Pillow's source headers to build its C extension. Download
-or clone the Pillow source release that exactly matches the version of Pillow
-installed in the virtual environment, and point ``PIL_INCLUDE_DIR`` at its
-``src/libImaging`` directory. A version mismatch between the installed Pillow
-library and the headers can lead to compile failures or segfaults while running
-Overviewer due to an ABI mismatch::
-
-    PILLOW_VERSION=$(python -c "import PIL; print(PIL.__version__)")
-    git clone --branch="$PILLOW_VERSION" --depth=1 https://github.com/python-pillow/Pillow.git /tmp/pillow
-    export PIL_INCLUDE_DIR=/tmp/pillow/src/libImaging
-
-Then build::
-
-    python setup.py build
-
-At this point, you can run ``overviewer.py`` from the current directory while
-the virtual environment is activated::
-
-    python overviewer.py --config=/path/to/your/config
-
-
-macOS
------
-
-#. Install the Xcode Command Line Tools by running the following command in a terminal (located in your /Applications/Utilities folder)::
-
-    xcode-select --install
-
-#. Install Python 3.10 or newer if you don't already have it, for example from `the official Python website <https://www.python.org/downloads/mac-osx/>`_.
-#. Install PIP, e.g. with::
-
-    sudo easy_install pip
-
-#. Install Pillow (overviewer needs PIL, Pillow is a fork of PIL that provides the same functionality)::
-
-    pip install Pillow
-
-#. Install numpy::
-
-    pip install numpy
-
-#. Download the Pillow source files for the same Pillow version installed in your Python environment and unpack the tar.gz file to a directory you can remember
-#. Download the Minecraft Overviewer source-code from https://overviewer.org/builds/overviewer-latest.tar.gz
-#. Extract overviewer-[Version].tar.gz and move it to a directory you can remember
-#. Point ``PIL_INCLUDE_DIR`` at the Pillow-[Version]/src/libImaging directory
-#. Make sure your installation of Python 3 is in ``$PATH``
-#. In a terminal, change your current working directory to your overviewer-[Version] folder (e.g. by using ``cd Desktop/overviewer-[Version]``)
-#. Build::
-
-    export PIL_INCLUDE_DIR=/path/to/Pillow-[Version]/src/libImaging
-    python3 setup.py build
-
-You should now be able to run Overviewer with ``./overviewer.py`` inside of the
-Overviewer directory.
