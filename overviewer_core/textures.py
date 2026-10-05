@@ -286,7 +286,7 @@ class Textures(object):
         return img
 
     def load_sign_texture(self, wood, hanging=False):
-        """Repack the 26.2+ sign UVs into the layout used by the sign renderers."""
+        """Load a modern sign texture, converting legacy entity atlases if needed."""
         key = ("sign_atlas", wood, hanging)
         if key in self.texture_cache:
             return self.texture_cache[key]
@@ -296,27 +296,66 @@ class Textures(object):
             "hanging/" if hanging else "") + wood + ".png"
         texture = self.load_image((modern, legacy))
         if not texture.info.get("overviewer_texture", "").endswith(modern):
-            return texture
+            legacy_texture = texture.resize((64, 32), Image.LANCZOS)
+            texture = Image.new("RGBA", (32, 32), self.bgcolor)
+            if hanging:
+                pieces = (
+                    ((4, 0, 20, 4), (0, 0)),
+                    ((4, 4, 20, 6), (0, 4)),
+                    ((0, 4, 4, 6), (16, 4)),
+                    ((2, 12, 16, 14), (2, 14)),
+                    ((2, 14, 16, 24), (2, 16)),
+                    ((0, 14, 2, 24), (0, 16)),
+                    ((14, 6, 26, 12), (20, 0)),
+                    ((0, 6, 3, 12), (22, 7)),
+                    ((6, 7, 9, 11), (28, 8)),
+                )
+            else:
+                pieces = (((2, 2, 26, 14), (0, 2)),)
+            for source, destination in pieces:
+                texture.paste(legacy_texture.crop(source), destination)
         texture = texture.resize((32, 32), Image.LANCZOS)
-        atlas = Image.new("RGBA", (64, 32), self.bgcolor)
-        if hanging:
-            pieces = (
-                ((0, 0, 16, 4), (4, 0)),
-                ((0, 4, 16, 6), (4, 4)),
-                ((16, 4, 20, 6), (0, 4)),
-                ((2, 14, 16, 16), (2, 12)),
-                ((2, 16, 16, 26), (2, 14)),
-                ((0, 16, 2, 26), (0, 14)),
-                ((20, 0, 32, 6), (14, 6)),
-                ((22, 7, 25, 13), (6, 6)),
-                ((28, 8, 31, 12), (0, 7)),
-            )
+        self.texture_cache[key] = texture
+        return texture
+
+    def load_bed_textures(self, color, part):
+        """Load modern bed faces, converting a legacy entity atlas if needed."""
+        key = ("bed_faces", color, part)
+        if key in self.texture_cache:
+            return self.texture_cache[key]
+        modern = BLOCKTEXTURE + "%s_bed_%s_up.png" % (color, part)
+        texture = self.load_image((
+            modern, "assets/minecraft/textures/entity/bed/%s.png" % color))
+        if texture.info.get("overviewer_texture", "").endswith(modern):
+            end_name = "bed_head_north" if part == "head" else color + "_bed_foot_south"
+            faces = {
+                "up": texture.resize((16, 16), Image.LANCZOS),
+                "west": self.load_image_texture(
+                    BLOCKTEXTURE + "%s_bed_%s_west.png" % (color, part)),
+                "east": self.load_image_texture(
+                    BLOCKTEXTURE + "%s_bed_%s_east.png" % (color, part)),
+                "end": self.load_image_texture(BLOCKTEXTURE + end_name + ".png"),
+            }
         else:
-            pieces = (((0, 2, 24, 14), (2, 2)),)
-        for source, destination in pieces:
-            atlas.paste(texture.crop(source), destination)
-        self.texture_cache[key] = atlas
-        return atlas
+            atlas = texture.resize((64, 64), Image.LANCZOS)
+            y = 6 if part == "head" else 28
+            leg = atlas.crop((53, 3, 56, 6))
+            west = Image.new("RGBA", (16, 16), self.bgcolor)
+            west.paste(atlas.crop((0, y, 6, y + 16)).rotate(90, expand=True), (0, 7))
+            west.paste(leg, (0 if part == "head" else 13, 13))
+            end = Image.new("RGBA", (16, 16), self.bgcolor)
+            end_box = (6, 0, 22, 6) if part == "head" else (22, 22, 38, 28)
+            end.paste(atlas.crop(end_box).rotate(180), (0, 7))
+            end.paste(leg, (0, 13))
+            end.paste(leg.transpose(Image.FLIP_LEFT_RIGHT), (13, 13))
+            faces = {
+                "up": atlas.crop((6, y, 22, y + 16)),
+                "west": west,
+                "east": west.transpose(Image.FLIP_LEFT_RIGHT),
+                "end": end,
+            }
+        self.texture_cache[key] = faces
+        return faces
 
 
     def load_water(self):
@@ -1323,107 +1362,30 @@ def bed(self, blockid, data):
 
     color = color_map[data >> 4]
     part = "head" if data & 8 else "foot"
-    modern_top = BLOCKTEXTURE + "%s_bed_%s_up.png" % (color, part)
-    bed_texture = self.load_image((modern_top,
-                                  "assets/minecraft/textures/entity/bed/%s.png" % color))
-    if bed_texture.info.get("overviewer_texture", "").endswith(modern_top):
-        top = bed_texture.resize((16, 16), Image.LANCZOS)
-        end_name = "bed_head_north" if part == "head" else color + "_bed_foot_south"
-        face_names = {
-            "west": "%s_bed_%s_west" % (color, part),
-            "east": "%s_bed_%s_east" % (color, part),
-            "end": end_name,
-        }
-        faces = {}
-        for face, name in face_names.items():
-            raw = self.load_image_texture(BLOCKTEXTURE + name + ".png")
-            image = Image.new("RGBA", (16, 16), self.bgcolor)
-            alpha_over(image, raw.crop((0, 7, 16, 13)), (0, 7))
-            legs = [0, 13] if face == "end" else [
-                0 if (face == "west") == (part == "head") else 13]
-            for x in legs:
-                alpha_over(image, raw.crop((x, 13, x + 3, 16)), (x, 13))
-            faces[face] = image
-        direction = data & 3
-        if direction == 0:
-            left, right = faces["east"], faces["end"] if part == "head" else None
-        elif direction == 1:
-            left = faces["end"] if part == "head" else None
-            right = faces["west"].transpose(Image.FLIP_LEFT_RIGHT)
-        elif direction == 2:
-            left, right = faces["west"], faces["end"] if part == "foot" else None
-        else:
-            left = faces["end"] if part == "foot" else None
-            right = faces["east"].transpose(Image.FLIP_LEFT_RIGHT)
-        return self.build_full_block((top.rotate((180, 90, 0, 270)[direction]), 7),
-                                     None, None, left, right)
-    increment = 8
-    left_face = None
-    right_face = None
-    top_face = None
-    if data & 0x8 == 0x8:  # head of the bed
-        top = bed_texture.copy().crop((6, 6, 22, 22))
-
-        # Composing the side
-        side = Image.new("RGBA", (16, 16), self.bgcolor)
-        side_part1 = bed_texture.copy().crop((0, 6, 6, 22)).rotate(90, expand=True)
-        # foot of the bed
-        side_part2 = bed_texture.copy().crop((53, 3, 56, 6))
-        side_part2_f = side_part2.transpose(Image.FLIP_LEFT_RIGHT)
-        alpha_over(side, side_part1, (0, 7), side_part1)
-        alpha_over(side, side_part2, (0, 13), side_part2)
-
-        end = Image.new("RGBA", (16, 16), self.bgcolor)
-        end_part = bed_texture.copy().crop((6, 0, 22, 6)).rotate(180)
-        alpha_over(end, end_part, (0, 7), end_part)
-        alpha_over(end, side_part2, (0, 13), side_part2)
-        alpha_over(end, side_part2_f, (13, 13), side_part2_f)
-        if data & 0x03 == 0x00:    # South
-            top_face = top.rotate(180)
-            left_face = side.transpose(Image.FLIP_LEFT_RIGHT)
-            right_face = end
-        elif data & 0x03 == 0x01:  # West
-            top_face = top.rotate(90)
-            left_face = end
-            right_face = side.transpose(Image.FLIP_LEFT_RIGHT)
-        elif data & 0x03 == 0x02:  # North
-            top_face = top
-            left_face = side
-        elif data & 0x03 == 0x03:  # East
-            top_face = top.rotate(270)
-            right_face = side
-
-    else:  # foot of the bed
-        top = bed_texture.copy().crop((6, 28, 22, 44))
-        side = Image.new("RGBA", (16, 16), self.bgcolor)
-        side_part1 = bed_texture.copy().crop((0, 28, 6, 44)).rotate(90, expand=True)
-        side_part2 = bed_texture.copy().crop((53, 3, 56, 6))
-        side_part2_f = side_part2.transpose(Image.FLIP_LEFT_RIGHT)
-        alpha_over(side, side_part1, (0, 7), side_part1)
-        alpha_over(side, side_part2, (13, 13), side_part2)
-
-        end = Image.new("RGBA", (16, 16), self.bgcolor)
-        end_part = bed_texture.copy().crop((22, 22, 38, 28)).rotate(180)
-        alpha_over(end, end_part, (0, 7), end_part)
-        alpha_over(end, side_part2, (0, 13), side_part2)
-        alpha_over(end, side_part2_f, (13, 13), side_part2_f)
-        if data & 0x03 == 0x00:    # South
-            top_face = top.rotate(180)
-            left_face = side.transpose(Image.FLIP_LEFT_RIGHT)
-        elif data & 0x03 == 0x01:  # West
-            top_face = top.rotate(90)
-            right_face = side.transpose(Image.FLIP_LEFT_RIGHT)
-        elif data & 0x03 == 0x02:  # North
-            top_face = top
-            left_face = side
-            right_face = end
-        elif data & 0x03 == 0x03:  # East
-            top_face = top.rotate(270)
-            left_face = end
-            right_face = side
-
-    top_face = (top_face, increment)
-    return self.build_full_block(top_face, None, None, left_face, right_face)
+    bed_textures = self.load_bed_textures(color, part)
+    faces = {}
+    for face in ("west", "east", "end"):
+        raw = bed_textures[face]
+        image = Image.new("RGBA", (16, 16), self.bgcolor)
+        alpha_over(image, raw.crop((0, 7, 16, 13)), (0, 7))
+        legs = [0, 13] if face == "end" else [
+            0 if (face == "west") == (part == "head") else 13]
+        for x in legs:
+            alpha_over(image, raw.crop((x, 13, x + 3, 16)), (x, 13))
+        faces[face] = image
+    direction = data & 3
+    if direction == 0:
+        left, right = faces["east"], faces["end"] if part == "head" else None
+    elif direction == 1:
+        left = faces["end"] if part == "head" else None
+        right = faces["west"].transpose(Image.FLIP_LEFT_RIGHT)
+    elif direction == 2:
+        left, right = faces["west"], faces["end"] if part == "foot" else None
+    else:
+        left = faces["end"] if part == "foot" else None
+        right = faces["east"].transpose(Image.FLIP_LEFT_RIGHT)
+    top = bed_textures["up"].rotate((180, 90, 0, 270)[direction])
+    return self.build_full_block((top, 7), None, None, left, right)
 
 # powered, detector, activator and normal rails
 @material(blockid=[27, 28, 66, 157], data=list(range(14)), transparent=True)
@@ -3140,7 +3102,7 @@ def signpost(self, blockid, data):
 
     if blockid == 12514:
         # override for bamboo, this is a different texture so load it from the sign texture directly.
-        texture = self.load_sign_texture("bamboo").crop((2, 2, 26, 14))
+        texture = self.load_sign_texture("bamboo").crop((0, 2, 24, 14))
         texture = texture.resize((16,12), Image.LANCZOS)
         teximg = Image.new("RGBA", (16,16), self.bgcolor)
         alpha_over(teximg, texture)
@@ -3462,7 +3424,7 @@ def wall_sign(self, blockid, data): # wall sign
 
     if blockid == 12511:
         # override for bamboo, this is a different texture so load it from the sign texture directly.
-        texture = self.load_sign_texture("bamboo").crop((2, 2, 26, 14))
+        texture = self.load_sign_texture("bamboo").crop((0, 2, 24, 14))
         texture = texture.resize((16,12), Image.LANCZOS)
         teximg = Image.new("RGBA", (16,16), self.bgcolor)
         alpha_over(teximg, texture)
@@ -3535,13 +3497,13 @@ def hanging_wall_sign(self, blockid, data):
     # We also need to crop it into bits for the relevant parts
     # top == the top face, side == the main side face, end == the small side face
 
-    bar_top_tex = texture.crop((4, 0, 20, 4))
-    bar_side_tex = texture.crop((4, 4, 20, 6))
-    bar_end_tex = texture.crop((0, 4, 4, 6))
+    bar_top_tex = texture.crop((0, 0, 16, 4))
+    bar_side_tex = texture.crop((0, 4, 16, 6))
+    bar_end_tex = texture.crop((16, 4, 20, 6))
 
-    sign_top_tex = texture.crop((2, 12, 16, 14))
-    sign_side_tex = texture.crop((2, 14, 16, 24))
-    sign_end_tex = texture.crop((0, 14, 2, 24))
+    sign_top_tex = texture.crop((2, 14, 16, 16))
+    sign_side_tex = texture.crop((2, 16, 16, 26))
+    sign_end_tex = texture.crop((0, 16, 2, 26))
 
     # For each part, we need to put the texture in the correct place in a 16x16 image
     # before transforming it. The transform rescales to 16x16, then squashes it into
@@ -3631,22 +3593,22 @@ def hanging_sign(self, blockid, data):
 
     full_texture = self.load_sign_texture(sign_texture[blockid][:-4], hanging=True)
 
-    sign_side_tex = full_texture.crop((2, 14, 16, 24))
+    sign_side_tex = full_texture.crop((2, 16, 16, 26))
 
     texture = Image.new("RGBA", (16,16), self.bgcolor)
     alpha_over(texture, sign_side_tex, (1, 6))
 
     if attached:
-        chain_tex = full_texture.crop((12, 6, 28, 12))
-        alpha_over(texture, chain_tex)
+        chain_tex = full_texture.crop((20, 0, 32, 6))
+        alpha_over(texture, chain_tex, (2, 0))
     else:
-        chain_tex_main = full_texture.crop((6, 6, 9, 12))
-        chain_tex_outer = full_texture.crop((0, 6, 3, 12))
+        chain_tex_main = full_texture.crop((22, 7, 25, 13))
+        chain_tex_outer = full_texture.crop((28, 8, 31, 12))
 
         alpha_over(texture, chain_tex_main, (2, 0))
-        alpha_over(texture, chain_tex_outer, (2, 0))
+        alpha_over(texture, chain_tex_outer, (2, 1))
         alpha_over(texture, chain_tex_main, (12, 0))
-        alpha_over(texture, chain_tex_outer, (12, 0))
+        alpha_over(texture, chain_tex_outer, (12, 1))
 
     img = Image.new("RGBA", (24,24), self.bgcolor)
 
