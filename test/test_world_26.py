@@ -80,6 +80,19 @@ class BlockstateTests(unittest.TestCase):
         self.assertEqual(DEFAULT_BLOCK_PROPERTIES["minecraft:oak_log"]["axis"], "y")
         self.assertEqual(self.rset._get_block("minecraft:chest"), (54, 2))
 
+    def test_equivalent_blockstates_share_cached_translation(self):
+        explicit = {
+            "id": "minecraft:oak_log",
+            "properties": {"axis": "y"},
+        }
+        self.assertEqual(self.rset._get_block("minecraft:oak_log"), (17, 0))
+        self.assertEqual(self.rset._get_block(explicit), (17, 0))
+        self.assertEqual(len(self.rset._block_cache), 1)
+
+        explicit["properties"]["axis"] = "x"
+        self.assertEqual(self.rset._get_block(explicit), (17, 4))
+        self.assertEqual(len(self.rset._block_cache), 2)
+
     def test_legacy_palette_is_not_reinterpreted(self):
         entry = {"Name": "minecraft:oak_log", "Properties": {"axis": "z"}}
         self.assertEqual(
