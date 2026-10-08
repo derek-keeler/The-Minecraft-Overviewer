@@ -19,6 +19,8 @@ from io import BytesIO
 import struct
 import zlib
 
+import numpy
+
 
 # decorator that turns the first argument from a string into an open file
 # handle
@@ -153,7 +155,7 @@ class NBTFileReader(object):
     def _read_tag_long_array(self):
         length = self._uint.unpack(self._file.read(4))[0]
         long_bytes = self._file.read(length * 8)
-        return struct.unpack(">%iq" % length, long_bytes)
+        return numpy.frombuffer(long_bytes, dtype=">i8")
 
     def _read_tag_string(self):
         length = self._ushort.unpack(self._file.read(2))[0]

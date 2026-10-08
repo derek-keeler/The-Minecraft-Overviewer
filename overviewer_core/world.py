@@ -66,6 +66,12 @@ def normalize_blockstate(entry):
     return {"id": name, "properties": dict(defaults, **properties)}
 
 
+@functools.lru_cache(maxsize=64)
+def _packed_longarray_shifts(bits_per_value):
+    values_per_long = 64 // bits_per_value
+    return numpy.arange(values_per_long, dtype=numpy.uint64) * bits_per_value
+
+
 def log_other_exceptions(func):
     """A decorator that prints out any errors that are not
     ChunkDoesntExist errors. This should decorate any functions or
@@ -2237,24 +2243,33 @@ class RegionSet(object):
         return (block, data)
 
 
+    @staticmethod
+    def _longarray_as_uint64(long_array):
+        longs = numpy.asarray(long_array)
+        if longs.dtype.kind in "iu" and longs.dtype.itemsize == 8:
+            unsigned_dtype = numpy.dtype("%su8" % longs.dtype.byteorder)
+            return longs.view(unsigned_dtype).astype(numpy.uint64, copy=False)
+        return numpy.asarray(long_array, dtype=numpy.int64).view(numpy.uint64)
+
+    def _unpack_padded_longarray(self, long_array, n, bits_per_value):
+        if not 1 <= bits_per_value <= 16:
+            raise nbt.CorruptChunkError(
+                "Invalid packed palette width: %d" % bits_per_value)
+        longs = self._longarray_as_uint64(long_array)
+        shifts = _packed_longarray_shifts(bits_per_value)
+        if longs.size * shifts.size < n:
+            raise nbt.CorruptChunkError("Packed long array is too short")
+        mask = numpy.uint64((1 << bits_per_value) - 1)
+        unpacked = ((longs[:, numpy.newaxis] >> shifts) & mask).reshape(-1)
+        return unpacked[:n].astype(numpy.uint16, copy=False)
+
+    @staticmethod
+    def _translate_packed_palette(indices, *palettes):
+        return tuple(numpy.take(palette, indices) for palette in palettes)
+
     def _packed_longarray_to_shorts_v118_biome(self, long_array, n, num_palette_entries):
-
-        # num_palette_entries must be >= 2, if 0 or 1 all biomedata is palette[0] anyway.
-        bits_per_value = 32 - (32 - ((num_palette_entries-1).bit_length()))
-
-        # NBT long arrays hold signed Java longs; numpy 2.x rejects casting
-        # negative Python ints straight to uint64, so go via int64 and
-        # reinterpret the bits.
-        b = numpy.asarray(long_array, dtype=numpy.int64).view(numpy.uint64)
-        result = numpy.zeros((n,), dtype=numpy.uint16)
-        shorts_per_long = 64 // bits_per_value
-        mask = (1 << bits_per_value) - 1
-
-        for i in range(shorts_per_long):
-            j = (n + shorts_per_long - 1 - i) // shorts_per_long
-            result[i::shorts_per_long] = (b[:j] >> (bits_per_value * i)) & mask
-
-        return result
+        bits_per_value = (num_palette_entries - 1).bit_length()
+        return self._unpack_padded_longarray(long_array, n, bits_per_value)
 
     def _get_biomedata_v118(self, section):
         biomestag = section['biomes']
@@ -2278,22 +2293,15 @@ class RegionSet(object):
             except ValueError as exc:
                 raise nbt.CorruptChunkError("Unsupported biome %r" % key) from exc
 
-        if not biome_data:
+        if biome_data is None or len(biome_data) == 0:
             #no biome-dataarray, means entire biome is palette[0]
             tmp = numpy.full((64,), translated_biomes[0], dtype=numpy.uint8)
             biomes = tmp.reshape((4, 4, 4))
             return biomes
 
-        # Biome result-array
-        biomes = numpy.zeros((64,), dtype=numpy.uint8)
-
         biomes_data_unpacked = self._packed_longarray_to_shorts_v118_biome(biome_data, 64, num_palette_entries)
-        biomes[:] = translated_biomes[biomes_data_unpacked]
-
-        # Turn the Data array into a 4x4x4 matrix, same as SkyLight
-        biomes = biomes.reshape((4, 4, 4))
-
-        return biomes
+        biomes, = self._translate_packed_palette(biomes_data_unpacked, translated_biomes)
+        return biomes.reshape((4, 4, 4))
 
     def get_type(self):
         """Attempts to return a string describing the dimension
@@ -2388,29 +2396,12 @@ class RegionSet(object):
 
     def _packed_longarray_to_shorts_v116(self, long_array, n, num_palette):
         bits_per_value = max(4, (len(long_array) * 64) // n)
-
-        # NBT long arrays hold signed Java longs; numpy 2.x rejects casting
-        # negative Python ints straight to uint64, so go via int64 and
-        # reinterpret the bits.
-        b = numpy.asarray(long_array, dtype=numpy.int64).view(numpy.uint64)
-        result = numpy.zeros((n,), dtype=numpy.uint16)
-        shorts_per_long = 64 // bits_per_value
-        mask = (1 << bits_per_value) - 1
-
-        for i in range(shorts_per_long):
-            j = (n + shorts_per_long - 1 - i) // shorts_per_long
-            result[i::shorts_per_long] = (b[:j] >> (bits_per_value * i)) & mask
-
-        return result
+        return self._unpack_padded_longarray(long_array, n, bits_per_value)
 
     def _get_blockdata_v118(self, section, unrecognized_block_types, longarray_unpacker):
         block_states = section['block_states']
         palette = block_states.get('palette')
         block_states_data = block_states.get('data')
-
-        if not block_states_data:
-            # This chunk is missing its block data, skip it
-            block_states_data = numpy.zeros((256,), dtype=numpy.uint16)
 
         # Translate each entry in the palette to a 1.2-era (block, data) int pair.
         num_palette_entries = len(palette)
@@ -2427,18 +2418,15 @@ class RegionSet(object):
                                                % (name, exc)) from exc
                 unrecognized_block_types[name] = unrecognized_block_types.get(name, 0) + 1
 
-        # Turn the BlockStates array into a 16x16x16 numpy matrix of shorts.
-        blocks = numpy.empty((4096,), dtype=numpy.uint16)
-        data = numpy.empty((4096,), dtype=numpy.uint8)
+        if block_states_data is None or len(block_states_data) == 0:
+            blocks = numpy.full((4096,), translated_blocks[0], dtype=numpy.uint16)
+            data = numpy.full((4096,), translated_data[0], dtype=numpy.uint8)
+            return (blocks.reshape((16, 16, 16)), data.reshape((16, 16, 16)))
+
         block_states = longarray_unpacker(block_states_data, 4096, num_palette_entries)
-        blocks[:] = translated_blocks[block_states]
-        data[:] = translated_data[block_states]
-
-        # Turn the Data array into a 16x16x16 matrix, same as SkyLight
-        blocks = blocks.reshape((16, 16, 16))
-        data = data.reshape((16, 16, 16))
-
-        return (blocks, data)
+        blocks, data = self._translate_packed_palette(
+            block_states, translated_blocks, translated_data)
+        return (blocks.reshape((16, 16, 16)), data.reshape((16, 16, 16)))
 
     def _get_blockdata_v113(self, section, unrecognized_block_types, longarray_unpacker):
         # Translate each entry in the palette to a 1.2-era (block, data) int pair.
@@ -2452,18 +2440,10 @@ class RegionSet(object):
             except KeyError:
                 pass    # We already have initialised arrays with 0 (= air)
 
-        # Turn the BlockStates array into a 16x16x16 numpy matrix of shorts.
-        blocks = numpy.empty((4096,), dtype=numpy.uint16)
-        data = numpy.empty((4096,), dtype=numpy.uint8)
         block_states = longarray_unpacker(section['BlockStates'], 4096, num_palette_entries)
-        blocks[:] = translated_blocks[block_states]
-        data[:] = translated_data[block_states]
-
-        # Turn the Data array into a 16x16x16 matrix, same as SkyLight
-        blocks  = blocks.reshape((16, 16, 16))
-        data = data.reshape((16, 16, 16))
-
-        return (blocks, data)
+        blocks, data = self._translate_packed_palette(
+            block_states, translated_blocks, translated_data)
+        return (blocks.reshape((16, 16, 16)), data.reshape((16, 16, 16)))
 
     def _get_blockdata_v112(self, section):
         # Turn the Data array into a 16x16x16 matrix, same as SkyLight
@@ -2524,10 +2504,11 @@ class RegionSet(object):
         """
         chunk_data = self.__get_chunk(x, z, False)
 
-        longarray_unpacker = self._packed_longarray_to_shorts
         if chunk_data.get('DataVersion', 0) >= 2529:
             # starting with 1.16 snapshot 20w17a, block states are packed differently
             longarray_unpacker = self._packed_longarray_to_shorts_v116
+        else:
+            longarray_unpacker = self._packed_longarray_to_shorts
 
         unrecognized_block_types = {}
         for section in chunk_data['Sections']:

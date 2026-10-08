@@ -1,6 +1,8 @@
 import copy
+from io import BytesIO
 import os
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -112,18 +114,42 @@ class BlockstateTests(unittest.TestCase):
         palette = ["minecraft:grass_block", {"": "minecraft:sulfur"},
                    {"id": "minecraft:oak_log", "properties": {"axis": "x"}},
                    {"Name": "minecraft:stone"}]
-        packed = (sum((i % 4) << (4 * i) for i in range(16)),) * 256
+        packed_long = sum((i % 4) << (4 * i) for i in range(16))
+        packed = numpy.full((256,), packed_long, dtype=">u8").view(">i8")
         section = self.read_chunk(self.chunk(palette, packed))["Sections"][0]
         numpy.testing.assert_array_equal(section["Blocks"].ravel(),
                                          numpy.tile([2, 265, 17, 1], 1024))
         numpy.testing.assert_array_equal(section["Data"].ravel(),
                                          numpy.tile([0, 0, 4, 0], 1024))
 
+    def test_padded_longarray_unpacking_handles_all_palette_widths(self):
+        for bits_per_value in range(1, 13):
+            values_per_long = 64 // bits_per_value
+            mask = (1 << bits_per_value) - 1
+            expected = numpy.arange(values_per_long * 3, dtype=numpy.uint16) & mask
+            packed = []
+            for values in expected.reshape((-1, values_per_long)):
+                packed.append(sum(int(value) << (bits_per_value * i)
+                                  for i, value in enumerate(values)))
+            packed = numpy.asarray(packed, dtype=numpy.uint64).view(numpy.int64)
+            with self.subTest(bits_per_value=bits_per_value):
+                actual = self.rset._unpack_padded_longarray(
+                    packed, len(expected), bits_per_value)
+                numpy.testing.assert_array_equal(actual, expected)
+
     def test_single_palette_without_packed_data(self):
         section = self.read_chunk(self.chunk(["minecraft:chest"]))["Sections"][0]
         self.assertEqual(section["Blocks"].shape, (16, 16, 16))
         self.assertTrue(numpy.all(section["Blocks"] == 54))
         self.assertTrue(numpy.all(section["Data"] == 2))
+
+    def test_nbt_long_arrays_are_big_endian_numpy_views(self):
+        values = (-1, 0, 0x123456789ABCDEF)
+        reader = nbt.NBTFileReader.__new__(nbt.NBTFileReader)
+        reader._file = BytesIO(struct.pack(">I3q", len(values), *values))
+        result = reader._read_tag_long_array()
+        self.assertEqual(result.dtype, numpy.dtype(">i8"))
+        numpy.testing.assert_array_equal(result, values)
 
     def test_unknown_block_is_reported_once(self):
         chunk = self.chunk(["example:unknown"])
