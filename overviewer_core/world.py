@@ -358,6 +358,7 @@ class RegionSet(object):
 
         self.empty_chunk = [None,None]
         self._unrecognized_blocks = set()
+        self._block_cache = {}
         logging.debug("Done scanning regions")
 
         self._biomemap = [
@@ -1570,6 +1571,14 @@ class RegionSet(object):
 
     def _get_block(self, palette_entry):
         palette_entry = normalize_blockstate(palette_entry)
+        cache_key = (
+            palette_entry['id'],
+            tuple(sorted(palette_entry['properties'].items())),
+        )
+        try:
+            return self._block_cache[cache_key]
+        except KeyError:
+            pass
 
         def generate_copper(base_id, base_ns="minecraft"):
             variants = []
@@ -2240,7 +2249,9 @@ class RegionSet(object):
             data = ['north', 'east', 'south', 'west'].index(properties['facing'])
             data |= int(properties['hydration']) << 2
 
-        return (block, data)
+        result = (block, data)
+        self._block_cache[cache_key] = result
+        return result
 
 
     @staticmethod
