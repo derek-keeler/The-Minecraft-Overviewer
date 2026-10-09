@@ -2988,14 +2988,32 @@ class CachedRegionSet(RegionSetWrapper):
             except KeyError:
                 pass
         else:
-            retval = super(CachedRegionSet, self).get_chunk(x,z)
+            try:
+                retval = super(CachedRegionSet, self).get_chunk(x,z)
+            except ChunkDoesntExist as e:
+                # Missing neighbours and chunks that aren't fully generated are
+                # requested over and over while rendering the tiles around
+                # them, and the latter are parsed in full before being
+                # rejected, so remember that they don't exist too.
+                retval = _MissingChunk(str(e))
 
         # Now add retval to all the caches that didn't have it, all the caches
         # up to and including index i
         for cache in self.caches[:i+1]:
             cache[key] = retval
 
+        if isinstance(retval, _MissingChunk):
+            # a new exception each time, so tracebacks don't accumulate
+            raise ChunkDoesntExist(retval.message)
         return retval
+
+
+class _MissingChunk(object):
+    """Cached in place of a chunk that raised ChunkDoesntExist."""
+    __slots__ = ("message",)
+
+    def __init__(self, message):
+        self.message = message
 
 
 def get_save_dir():

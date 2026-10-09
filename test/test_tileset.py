@@ -275,3 +275,30 @@ class TilesetTest(unittest.TestCase):
 
         for tilepath in expected:
             self.assertTrue(tilepath in paths, "%s was expected to be returned but wasn't: %s" % (tilepath, paths))
+
+    def test_render_tiles_are_yielded_in_contiguous_column_strips(self):
+        """Render-tiles of a column strip come out together, each tile is
+        yielded once, and every tile still follows its children."""
+        self.rs = FakeRegionset(dict(((x, z), 5) for x in range(-40, 40) for z in range(-40, 40)))
+        ts = self.get_tileset({'renderchecks': 2}, self.get_outputdir())
+        order = [path for path, _ in ts.iterate_work_items(0)]
+
+        self.assertEqual(len(order), len(set(order)))
+        # the same tiles as a plain traversal of the dirty tree
+        self.assertEqual(set(order), set(ts.dirtytree.posttraversal()))
+
+        position = dict((path, i) for i, path in enumerate(order))
+        for path, i in position.items():
+            for child in range(4):
+                if path + (child,) in position:
+                    self.assertLess(position[path + (child,)], i)
+
+        groups = [ts.get_work_group(path) for path in order if len(path) == ts.treedepth]
+        seen = set()
+        for previous, group in zip([None] + groups, groups):
+            if group != previous:
+                self.assertNotIn(group, seen, "strip %r was split up" % (group,))
+                seen.add(group)
+        self.assertGreater(len(seen), 1)
+        self.assertLessEqual(max(groups.count(g) for g in seen), ts.strip_rows // 4)
+        self.assertIsNone(ts.get_work_group(order[-1]))
