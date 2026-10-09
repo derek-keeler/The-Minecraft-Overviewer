@@ -132,6 +132,8 @@ class BlockstateTests(unittest.TestCase):
                                          numpy.tile([2, 265, 17, 1], 1024))
         numpy.testing.assert_array_equal(section["Data"].ravel(),
                                          numpy.tile([0, 0, 4, 0], 1024))
+        self.assertNotIn("block_states", section)
+        self.assertNotIn("biomes", section)
 
     def test_padded_longarray_unpacking_handles_all_palette_widths(self):
         for bits_per_value in range(1, 13):

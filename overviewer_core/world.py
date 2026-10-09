@@ -2559,14 +2559,18 @@ class RegionSet(object):
                 #apparently this can be missing, at least it was with 1.18-papermc generated map
                 if 'biomes' in section:
                     section['Biomes'] = self._get_biomedata_v118(section)
+                    del section['biomes']
                 else:
                     tmp = numpy.full((64,), 1, dtype=numpy.uint8)
                     section['Biomes'] = tmp.reshape((4, 4, 4))
 
                 if 'block_states' in section:
                     (blocks, data) = self._get_blockdata_v118(section, unrecognized_block_types, longarray_unpacker)
+                    del section['block_states']
                 elif 'Palette' in section:
                     (blocks, data) = self._get_blockdata_v113(section, unrecognized_block_types, longarray_unpacker)
+                    del section['Palette']
+                    del section['BlockStates']
                 elif 'Data' in section:
                     (blocks, data) = self._get_blockdata_v112(section)
                 else:   # Special case introduced with 1.14
