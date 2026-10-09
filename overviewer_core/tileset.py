@@ -88,6 +88,11 @@ do_work(workobj)
     return anything, so the results of its work should be reflected on the
     filesystem or by sending signals.
 
+get_locality_key()
+    Optional. Returns a key shared by workers whose work items at the same
+    position read the same data, or None. The Dispatcher can give such
+    workers' items to the same process so they share its caches.
+
 
 """
 
@@ -561,6 +566,24 @@ class TileSet(object):
             return None
         tile = RenderTile.from_path(tilepath)
         return (tile.col, tile.row // self.strip_rows)
+
+    def get_locality_key(self):
+        """Returns a key shared by tilesets whose render-tiles at the same
+        position read the same chunks (the same world, dimension and north
+        direction; crops don't matter), so they can share a worker's parsed
+        chunks. None if this tileset's work can't be grouped with others'.
+
+        """
+        # Without a dirty tree, tiles are only found as they are checked
+        if self.options['renderchecks'] not in (0, 2):
+            return None
+        north_dir = 0
+        rset = self.regionset
+        while isinstance(rset, world.RegionSetWrapper):
+            if isinstance(rset, world.RotatedRegionSet):
+                north_dir = (north_dir + rset.north_dir) % 4
+            rset = rset._r
+        return (rset.regiondir, north_dir)
 
     def _strip_tilepaths(self, strip):
         """The dirty render-tiles in the given column strip, top to bottom."""
