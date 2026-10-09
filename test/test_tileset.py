@@ -327,3 +327,42 @@ class TilesetTest(unittest.TestCase):
                          key(world.RotatedRegionSet(cropped, 1)))
         self.assertIsNone(key(cached, renderchecks=1))
         self.assertIsNone(key(cached, renderchecks=3))
+
+    def test_work_units(self):
+        """iterate_work_units() names each column strip once, with its
+        render-tiles given by strip_items() top to bottom, and yields other
+        work as single items. Flattened, it is iterate_work_items()."""
+        self.rs = FakeRegionset(dict(((x, z), 5) for x in range(-40, 40) for z in range(-40, 40)))
+        ts = self.get_tileset({'renderchecks': 2}, self.get_outputdir())
+
+        flattened = []
+        strips = []
+        for strip, item in ts.iterate_work_units(0):
+            if strip is None:
+                self.assertNotEqual(len(item[0]), ts.treedepth)
+                flattened.append(item)
+                continue
+            self.assertIsNone(item)
+            strips.append(strip)
+            rows = []
+            for row, (path, deps) in ts.strip_items(strip):
+                self.assertEqual(ts.get_work_group(path), strip)
+                self.assertEqual(tileset.RenderTile.from_path(path).row, row)
+                rows.append(row)
+                flattened.append((path, deps))
+            self.assertTrue(rows)
+            self.assertEqual(rows, sorted(rows))
+
+        self.assertEqual(len(strips), len(set(strips)))
+        self.assertEqual(flattened, list(ts.iterate_work_items(0)))
+
+    def test_changelist_names_each_tile_once(self):
+        self.rs = FakeRegionset(dict(((x, z), 5) for x in range(-40, 40) for z in range(-40, 40)))
+        with tempfile.TemporaryFile() as changelist:
+            ts = self.get_tileset({'renderchecks': 2, 'changelist': changelist.fileno()},
+                                  self.get_outputdir())
+            items = list(ts.iterate_work_items(0))
+            changelist.seek(0)
+            lines = changelist.read().decode().splitlines()
+        self.assertEqual(len(lines), len(items))
+        self.assertEqual(len(set(lines)), len(lines))

@@ -93,6 +93,12 @@ get_locality_key()
     position read the same data, or None. The Dispatcher can give such
     workers' items to the same process so they share its caches.
 
+iterate_work_units(phase), strip_items(strip)
+    Optional. Like iterate_work_items(), but groups of work items without
+    dependencies (strips) are given as (strip, None) and their items fetched
+    with strip_items(), so the Dispatcher can take a strip's items for all
+    workers with the same locality key at once.
+
 
 """
 
@@ -480,34 +486,30 @@ class TileSet(object):
 
         This method returns an iterator over (obj, [dependencies, ...])
         """
+        for strip, item in self.iterate_work_units(phase):
+            if strip is None:
+                yield item
+            else:
+                for _, item in self.strip_items(strip):
+                    yield item
+
+    def iterate_work_units(self, phase):
+        """iterate_work_items(), with each column strip of render-tiles (see
+        get_work_group()) given as one unit at the point the traversal reaches
+        its first tile.
+
+        This method returns an iterator over (strip, None) for a strip, whose
+        work items strip_items() returns, and (None, (obj, [dependencies, ...]))
+        for any other work item.
+        """
 
         # skip if asked to
         if self.options['renderchecks'] == 3:
             return
 
-        # The following block of code implementes the changelist functionality.
-        fd = self.options.get("changelist", None)
-        if fd:
-            logging.debug("Changelist activated for %s (fileno %s)", self, fd)
-
-            # This re-implements some of the logic from do_work()
-            def write_out(tilepath):
-                if len(tilepath) == self.treedepth:
-                    rt = RenderTile.from_path(tilepath)
-                    imgpath = rt.get_filepath(self.outputdir, self.imgextension)
-                elif len(tilepath) == 0:
-                    imgpath = os.path.join(self.outputdir, "base." + self.imgextension)
-                else:
-                    dest = os.path.join(self.outputdir, *(str(x) for x in tilepath[:-1]))
-                    name = str(tilepath[-1])
-                    imgpath = os.path.join(dest, name) + "." + self.imgextension
-                # We use low-level file output because we don't want open file
-                # handles being passed to subprocesses. fd is just an integer.
-                # This method is only called from the master process anyways.
-                # We don't use os.fdopen() because this fd may be shared by
-                # many tileset objects, and as soon as this method exists the
-                # file object may be garbage collected, closing the file.
-                os.write(fd, (imgpath + "\n").encode())
+        if self.options.get("changelist"):
+            logging.debug("Changelist activated for %s (fileno %s)", self,
+                          self.options["changelist"])
 
         # See note at the top of this file about the rendercheck modes for an
         # explanation of what this method does in different situations.
@@ -516,29 +518,17 @@ class TileSet(object):
         # render. Iterate over the tiles in using the posttraversal() method.
         # Yield each item. Easy.
         if self.options['renderchecks'] in (0, 2):
-            # Render-tiles are yielded a whole column strip at a time (see
-            # get_work_group()), at the point the traversal reaches the strip's
-            # first tile. Parents still come after all of their children.
+            # Parents still come after all of their children, since a strip
+            # is given before the traversal reaches any of its tiles' parents.
             yielded_strips = set()
             for tilepath in self.dirtytree.posttraversal(robin=True):
                 if len(tilepath) == self.treedepth:
                     strip = self.get_work_group(tilepath)
-                    if strip in yielded_strips:
-                        continue
-                    yielded_strips.add(strip)
-                    tilepaths = self._strip_tilepaths(strip)
+                    if strip not in yielded_strips:
+                        yielded_strips.add(strip)
+                        yield strip, None
                 else:
-                    tilepaths = [tilepath]
-                for tilepath in tilepaths:
-                    dependencies = []
-                    # These tiles may or may not exist, but the dispatcher won't
-                    # care according to the worker interface protocol It will only
-                    # wait for the items that do exist and are in the queue.
-                    for i in range(4):
-                        dependencies.append(tilepath + (i,))
-                    if fd:
-                        write_out(tilepath)
-                    yield tilepath, dependencies
+                    yield None, self._work_item(tilepath)
 
         else:
             # For mode 1, self.dirtytree holds every tile that should exist,
@@ -546,12 +536,43 @@ class TileSet(object):
             # need rendering.
             for tilepath, mtime, needs_rendering in self._iterate_and_check_tiles(()):
                 if needs_rendering:
-                    dependencies = []
-                    for i in range(4):
-                        dependencies.append(tilepath + (i,))
-                    if fd:
-                        write_out(tilepath)
-                    yield tilepath, dependencies
+                    yield None, self._work_item(tilepath)
+
+    def strip_items(self, strip):
+        """The work items for the dirty render-tiles in the given column
+        strip, top to bottom, as (row, (obj, [dependencies, ...])). row is the
+        tile's row, which is the same in every tileset."""
+        return [(row, self._work_item(tilepath)) for row, tilepath in self._strip_tiles(strip)]
+
+    def _work_item(self, tilepath):
+        """The work item for a tile being handed out, which is also noted in
+        the changelist if there is one."""
+        # These tiles may or may not exist, but the dispatcher won't care
+        # according to the worker interface protocol It will only wait for the
+        # items that do exist and are in the queue.
+        dependencies = [tilepath + (i,) for i in range(4)]
+        if self.options.get("changelist"):
+            self._write_changelist(tilepath)
+        return tilepath, dependencies
+
+    def _write_changelist(self, tilepath):
+        # This re-implements some of the logic from do_work()
+        if len(tilepath) == self.treedepth:
+            rt = RenderTile.from_path(tilepath)
+            imgpath = rt.get_filepath(self.outputdir, self.imgextension)
+        elif len(tilepath) == 0:
+            imgpath = os.path.join(self.outputdir, "base." + self.imgextension)
+        else:
+            dest = os.path.join(self.outputdir, *(str(x) for x in tilepath[:-1]))
+            name = str(tilepath[-1])
+            imgpath = os.path.join(dest, name) + "." + self.imgextension
+        # We use low-level file output because we don't want open file
+        # handles being passed to subprocesses. fd is just an integer.
+        # This method is only called from the master process anyways.
+        # We don't use os.fdopen() because this fd may be shared by
+        # many tileset objects, and as soon as this method exists the
+        # file object may be garbage collected, closing the file.
+        os.write(self.options["changelist"], (imgpath + "\n").encode())
 
     # Render-tiles in the same column strip of this many chunk rows (16 tiles)
     # are rendered by one worker. A chunk is drawn into a dozen vertically
@@ -585,17 +606,18 @@ class TileSet(object):
             rset = rset._r
         return (rset.regiondir, north_dir)
 
-    def _strip_tilepaths(self, strip):
-        """The dirty render-tiles in the given column strip, top to bottom."""
+    def _strip_tiles(self, strip):
+        """The dirty render-tiles in the given column strip, top to bottom, as
+        (row, tilepath)."""
         col, band = strip
         yradius = 2 * 2**self.treedepth
-        tilepaths = []
+        tiles = []
         for row in range(band * self.strip_rows, (band + 1) * self.strip_rows, 4):
             if -yradius <= row < yradius:
                 tilepath = RenderTile.compute_path(col, row, self.treedepth).path
                 if self.dirtytree.query_path(tilepath):
-                    tilepaths.append(tilepath)
-        return tilepaths
+                    tiles.append((row, tilepath))
+        return tiles
 
     def do_work(self, tilepath):
         """Renders the given tile.
