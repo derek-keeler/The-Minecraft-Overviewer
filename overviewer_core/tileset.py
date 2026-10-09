@@ -934,6 +934,8 @@ class TileSet(object):
 
         chunkcount = 0
         stime = time.time()
+        # a progress line every so often, for worlds that take a while
+        next_progress = stime + 15
 
         rendercheck = self.options['renderchecks']
         markall = rendercheck in (1, 2)
@@ -953,6 +955,9 @@ class TileSet(object):
                 if (markall or platform.system() == 'Windows') \
                 else self.regionset.iterate_newer_chunks(last_rendertime):
             chunkcount += 1
+            if chunkcount % 10000 == 0 and time.time() >= next_progress:
+                logging.info("      %s: %d chunks scanned so far", self.options['name'], chunkcount)
+                next_progress = time.time() + 15
 
             if chunkmtime > max_chunk_mtime:
                 max_chunk_mtime = chunkmtime
@@ -1009,6 +1014,7 @@ class TileSet(object):
             "s" if t != 1 else "")
 
         self.max_chunk_mtime = max_chunk_mtime
+        self.scanned_chunks = chunkcount
         return dirty
 
     def __str__(self):
