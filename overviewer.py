@@ -528,9 +528,12 @@ def main():
         texture_cache_dir = None
     overviewer_version = "%s (%s)" % (util.findGitTag(), util.findGitHash())
 
-    # Set up the cache objects to use
+    # Set up the cache objects to use. A render-tile reads up to about 105
+    # chunks (about 0.5 MB each once parsed), and a worker renders each tile
+    # for every render of the same world and dimension in turn, so all of
+    # them must fit.
     caches = []
-    caches.append(cache.LRUCache(size=100))
+    caches.append(cache.LRUCache(size=200))
     # TODO: optionally more caching layers here
 
     renders = config['renders']
