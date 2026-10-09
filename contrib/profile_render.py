@@ -10,12 +10,12 @@ import tempfile
 import time
 
 
-WORLD_NAME = "TwentySix_Three"
+DEFAULT_WORLD = "TwentySix_Three"
 PROGRESS_RE = re.compile(r"Rendered\s+(\d+)\s+of\s+(\d+)")
 
 
-def next_output_directory(output_root):
-    pattern = re.compile(r"^%s(?:-(\d+))?$" % re.escape(WORLD_NAME))
+def next_output_directory(output_root, name):
+    pattern = re.compile(r"^%s(?:-(\d+))?$" % re.escape(name))
     highest = 0
     for path in output_root.iterdir() if output_root.exists() else ():
         if not path.is_dir():
@@ -23,7 +23,7 @@ def next_output_directory(output_root):
         match = pattern.match(path.name)
         if match:
             highest = max(highest, int(match.group(1) or 0))
-    return output_root / ("%s-%d" % (WORLD_NAME, highest + 1))
+    return output_root / ("%s-%d" % (name, highest + 1))
 
 
 def find_texture_path(repository, requested):
@@ -42,7 +42,7 @@ def find_texture_path(repository, requested):
     )
 
 
-def write_config(path, world, output, texture):
+def write_config(path, name, world, output, texture):
     path.write_text(
         "worlds[%r] = %r\n"
         "outputdir = %r\n"
@@ -54,12 +54,12 @@ def write_config(path, world, output, texture):
         "    'rendermode': 'normal',\n"
         "}\n"
         % (
-            WORLD_NAME,
+            name,
             str(world),
             str(output),
             str(texture),
-            WORLD_NAME,
-            WORLD_NAME + " Overworld",
+            name,
+            name + " Overworld",
         ),
         encoding="utf-8",
     )
@@ -67,7 +67,14 @@ def write_config(path, world, output, texture):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Profile a numbered TwentySix_Three overworld render.")
+        description="Profile a numbered overworld render of a test world.")
+    parser.add_argument(
+        "--world", type=Path,
+        help="World directory (containing level.dat); defaults to tmp/%s." % DEFAULT_WORLD)
+    parser.add_argument(
+        "--name",
+        help="Name for the output and profile files; defaults to the world "
+             "directory's name.")
     parser.add_argument(
         "--python", type=Path, default=Path(".venv/bin/python3.15"),
         help="Python executable containing profiling.sampling.")
@@ -80,15 +87,24 @@ def parse_args():
     parser.add_argument(
         "--sampling-rate", default="100hz",
         help="Sampling rate passed to profiling.sampling (default: 100hz).")
+    parser.add_argument(
+        "--profiler", choices=("sampling", "perf"), default="sampling",
+        help="sampling: Python's profiling.sampling flamegraph (default). "
+             "perf: Linux perf record of the whole process tree, for "
+             "profiling the C extension.")
+    parser.add_argument(
+        "--perf-frequency", type=int, default=999,
+        help="Samples per second per CPU for --profiler perf (default: 999).")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     repository = Path(__file__).resolve().parents[1]
-    world = repository / "tmp" / WORLD_NAME
+    world = (args.world or repository / "tmp" / DEFAULT_WORLD).resolve()
+    name = args.name or world.name
     output_root = repository / "tmp" / "out"
-    output = next_output_directory(output_root)
+    output = next_output_directory(output_root, name)
     texture = find_texture_path(repository, args.texturepath)
     #python = (repository / args.python).resolve() if not args.python.is_absolute() else args.python
     python = "python"
@@ -101,21 +117,40 @@ def main():
     output_root.mkdir(parents=True, exist_ok=True)
     profile_root = repository / "tmp" / "profiles"
     profile_root.mkdir(parents=True, exist_ok=True)
-    flamegraph = profile_root / (output.name + ".html")
+    if args.profiler == "perf":
+        profile = profile_root / (output.name + ".perf.data")
+    else:
+        profile = profile_root / (output.name + ".html")
 
     with tempfile.TemporaryDirectory(prefix="tmo-profile-") as temp_directory:
         config = Path(temp_directory) / "overviewer_config.py"
-        write_config(config, world.resolve(), output.resolve(), texture)
+        write_config(config, name, world, output.resolve(), texture)
 
-        command = [
-            str(python),
-            "-m", "profiling.sampling", "run",
-            "--subprocesses",
-            "--native",
-            "--mode", "cpu",
-            "-r", args.sampling_rate,
-            "--flamegraph",
-            "-o", str(flamegraph),
+        environment = None
+        if args.profiler == "perf":
+            # -X perf (inherited by workers through PYTHONPERFSUPPORT) makes
+            # Python frames visible in perf's call graphs.
+            environment = dict(os.environ, PYTHONPERFSUPPORT="1")
+            command = [
+                "perf", "record",
+                "-F", str(args.perf_frequency),
+                "--call-graph", "fp",
+                "-o", str(profile),
+                "--",
+                str(python), "-X", "perf",
+            ]
+        else:
+            command = [
+                str(python),
+                "-m", "profiling.sampling", "run",
+                "--subprocesses",
+                "--native",
+                "--mode", "cpu",
+                "-r", args.sampling_rate,
+                "--flamegraph",
+                "-o", str(profile),
+            ]
+        command += [
             str(repository / "overviewer.py"),
             "--simple-output",
             "--config=" + str(config),
@@ -124,7 +159,7 @@ def main():
             command.extend(["--processes", str(args.processes)])
 
         print("Output directory: %s" % output)
-        print("Flamegraph: %s" % flamegraph)
+        print("Profile: %s" % profile)
         print("Command: %s" % " ".join(command))
         print()
 
@@ -132,6 +167,7 @@ def main():
         process = subprocess.Popen(
             command,
             cwd=repository,
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -140,7 +176,7 @@ def main():
         completed_operations = total_operations = 0
         assert process.stdout is not None
         for line in process.stdout:
-            print(line, end="")
+            print(line, end="", flush=True)
             match = PROGRESS_RE.search(line)
             if match:
                 completed_operations = int(match.group(1))
@@ -163,7 +199,7 @@ def main():
     print("Render operations:  %d" % completed_operations)
     print("Operations/second:  %.3f" % (completed_operations / elapsed))
     print("Seconds/operation:  %.6f" % (elapsed / completed_operations))
-    print("Flamegraph:         %s" % flamegraph)
+    print("Profile:            %s" % profile)
 
 
 if __name__ == "__main__":
