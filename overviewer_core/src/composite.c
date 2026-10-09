@@ -29,22 +29,59 @@ typedef struct {
         Imaging image;
 } ImagingObject;
 
+/* interned attribute names, created on first use */
+static PyObject* core_image_attr = NULL;     /* "_im" */
+static PyObject* image_property_attr = NULL; /* "im" */
+/* cleared once an image without '_im' is seen (Pillow before 11) */
+static int has_core_image_attr = 1;
+
+static inline int
+is_imaging_core(PyObject* im) {
+    return strcmp(Py_TYPE(im)->tp_name, "ImagingCore") == 0;
+}
+
 inline Imaging
 imaging_python_to_c(PyObject* obj) {
-    PyObject* im;
+    PyObject* im = NULL;
     Imaging image;
 
-    /* first, get the 'im' attribute */
-    im = PyObject_GetAttrString(obj, "im");
-    if (!im)
-        return NULL;
+    if (!core_image_attr) {
+        core_image_attr = PyUnicode_InternFromString("_im");
+        image_property_attr = PyUnicode_InternFromString("im");
+        if (!core_image_attr || !image_property_attr)
+            return NULL;
+    }
 
-    /* make sure 'im' is the right type */
-    if (strcmp(im->ob_type->tp_name, "ImagingCore") != 0) {
-        /* it's not -- raise an error and exit */
-        PyErr_SetString(PyExc_TypeError,
-                        "image attribute 'im' is not a core Imaging type");
-        return NULL;
+    /* Pillow 11+ exposes the core image through an 'im' property, which runs
+       Python code on every access, and this is called for every block drawn.
+       Read the '_im' attribute behind the property directly, falling back to
+       'im' for older Pillow versions and for closed images. */
+    if (has_core_image_attr) {
+        im = PyObject_GetAttr(obj, core_image_attr);
+        if (!im) {
+            if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+                return NULL;
+            PyErr_Clear();
+            has_core_image_attr = 0;
+        } else if (!is_imaging_core(im)) {
+            Py_DECREF(im);
+            im = NULL;
+        }
+    }
+
+    if (!im) {
+        im = PyObject_GetAttr(obj, image_property_attr);
+        if (!im)
+            return NULL;
+
+        /* make sure 'im' is the right type */
+        if (!is_imaging_core(im)) {
+            /* it's not -- raise an error and exit */
+            Py_DECREF(im);
+            PyErr_SetString(PyExc_TypeError,
+                            "image attribute 'im' is not a core Imaging type");
+            return NULL;
+        }
     }
 
     image = ((ImagingObject*)im)->image;
@@ -92,6 +129,39 @@ setup_source_destination(Imaging src, Imaging dest,
         *ysize = dest->ysize - *dy;
 }
 
+/* blends one source pixel with the given alpha onto an RGBA destination pixel */
+static inline void
+blend_pixel(UINT8* out, const UINT8* in, UINT8 in_alpha) {
+    UINT8* outmask = out + 3;
+    int32_t tmp1, tmp2, tmp3;
+    uint32_t i;
+
+    /* special cases */
+    if (in_alpha == 255 || (*outmask == 0 && in_alpha > 0)) {
+        *outmask = in_alpha;
+        out[0] = in[0];
+        out[1] = in[1];
+        out[2] = in[2];
+    } else if (in_alpha != 0 && *outmask == 255) {
+        /* over an opaque pixel the result stays opaque, and the general case
+           below reduces exactly to this, without the division */
+        out[0] = OV_MULDIV255(in[0], in_alpha, tmp1) + OV_MULDIV255(out[0], 255 - in_alpha, tmp2);
+        out[1] = OV_MULDIV255(in[1], in_alpha, tmp1) + OV_MULDIV255(out[1], 255 - in_alpha, tmp2);
+        out[2] = OV_MULDIV255(in[2], in_alpha, tmp1) + OV_MULDIV255(out[2], 255 - in_alpha, tmp2);
+    } else if (in_alpha != 0) {
+        /* general case; a fully transparent source does nothing */
+        int32_t alpha = in_alpha + OV_MULDIV255(*outmask, 255 - in_alpha, tmp1);
+        for (i = 0; i < 3; i++) {
+            out[i] = OV_MULDIV255(in[i], in_alpha, tmp1) +
+                     OV_MULDIV255(OV_MULDIV255(out[i], *outmask, tmp2), 255 - in_alpha, tmp3);
+
+            out[i] = (out[i] * 255) / alpha;
+        }
+
+        *outmask = alpha;
+    }
+}
+
 /* convenience alpha_over with 1.0 as overall_alpha */
 inline PyObject* alpha_over(PyObject* dest, PyObject* src, PyObject* mask,
                             int32_t dx, int32_t dy, int32_t xsize, int32_t ysize) {
@@ -114,9 +184,10 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
     int32_t sx, sy;
     /* iteration variables */
     int32_t x, y;
-    uint32_t i;
-    /* temporary calculation variables */
-    int32_t tmp1, tmp2, tmp3;
+    /* temporary calculation variable */
+    int32_t tmp1;
+    /* whether the four-pixel fast path applies */
+    int32_t fast_runs;
     /* integer [0, 255] version of overall_alpha */
     UINT8 overall_alpha_int = 255 * overall_alpha;
 
@@ -124,11 +195,10 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
     if (overall_alpha_int == 0)
         return dest;
 
-    imDest = imaging_python_to_c(dest);
-    imSrc = imaging_python_to_c(src);
-    imMask = imaging_python_to_c(mask);
-
-    if (!imDest || !imSrc || !imMask)
+    /* stop at the first failure; the next lookup can't run with an exception set */
+    if (!(imDest = imaging_python_to_c(dest)) ||
+        !(imSrc = imaging_python_to_c(src)) ||
+        !(imMask = imaging_python_to_c(mask)))
         return NULL;
 
     /* check the various image modes, make sure they make sense */
@@ -173,13 +243,40 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
         return dest;
     }
 
+    /* runs of four fully opaque or fully transparent pixels are handled
+       without the per-pixel blend; that covers most of a block texture */
+    fast_runs = (overall_alpha_int == 255 && src_has_alpha && imSrc != imDest);
+
     for (y = 0; y < ysize; y++) {
         UINT8* out = (UINT8*)imDest->image[dy + y] + dx * 4;
-        UINT8* outmask = (UINT8*)imDest->image[dy + y] + dx * 4 + 3;
         UINT8* in = (UINT8*)imSrc->image[sy + y] + sx * (imSrc->pixelsize);
         UINT8* inmask = (UINT8*)imMask->image[sy + y] + sx * mask_stride + mask_offset;
 
-        for (x = 0; x < xsize; x++) {
+        x = 0;
+        if (fast_runs) {
+            for (; x + 4 <= xsize; x += 4) {
+                UINT8 a0 = inmask[0];
+                UINT8 a1 = inmask[mask_stride];
+                UINT8 a2 = inmask[2 * mask_stride];
+                UINT8 a3 = inmask[3 * mask_stride];
+
+                if ((a0 & a1 & a2 & a3) == 255) {
+                    memcpy(out, in, 16);
+                    out[3] = out[7] = out[11] = out[15] = 255;
+                } else if ((a0 | a1 | a2 | a3) != 0) {
+                    blend_pixel(out, in, a0);
+                    blend_pixel(out + 4, in + 4, a1);
+                    blend_pixel(out + 8, in + 8, a2);
+                    blend_pixel(out + 12, in + 12, a3);
+                }
+
+                out += 16;
+                in += 16;
+                inmask += 4 * mask_stride;
+            }
+        }
+
+        for (; x < xsize; x++) {
             UINT8 in_alpha;
 
             /* apply overall_alpha */
@@ -189,39 +286,10 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
                 in_alpha = *inmask;
             }
 
-            /* special cases */
-            if (in_alpha == 255 || (*outmask == 0 && in_alpha > 0)) {
-                *outmask = in_alpha;
+            blend_pixel(out, in, in_alpha);
 
-                *out = *in;
-                out++, in++;
-                *out = *in;
-                out++, in++;
-                *out = *in;
-                out++, in++;
-            } else if (in_alpha == 0) {
-                /* do nothing -- source is fully transparent */
-                out += 3;
-                in += 3;
-            } else {
-                /* general case */
-                int32_t alpha = in_alpha + OV_MULDIV255(*outmask, 255 - in_alpha, tmp1);
-                for (i = 0; i < 3; i++) {
-                    /* general case */
-                    *out = OV_MULDIV255(*in, in_alpha, tmp1) +
-                           OV_MULDIV255(OV_MULDIV255(*out, *outmask, tmp2), 255 - in_alpha, tmp3);
-
-                    *out = (*out * 255) / alpha;
-                    out++, in++;
-                }
-
-                *outmask = alpha;
-            }
-
-            out++;
-            if (src_has_alpha)
-                in++;
-            outmask += 4;
+            out += 4;
+            in += imSrc->pixelsize;
             inmask += mask_stride;
         }
     }
@@ -294,10 +362,8 @@ tint_with_mask(PyObject* dest,
     /* temporary calculation variables */
     int32_t tmp1, tmp2;
 
-    imDest = imaging_python_to_c(dest);
-    imMask = imaging_python_to_c(mask);
-
-    if (!imDest || !imMask)
+    if (!(imDest = imaging_python_to_c(dest)) ||
+        !(imMask = imaging_python_to_c(mask)))
         return NULL;
 
     /* check the various image modes, make sure they make sense */
@@ -520,10 +586,8 @@ resize_half(PyObject* dest, PyObject* src) {
     /* size values for source and destination */
     uint32_t src_width, src_height, dest_width, dest_height;
 
-    imDest = imaging_python_to_c(dest);
-    imSrc = imaging_python_to_c(src);
-
-    if (!imDest || !imSrc)
+    if (!(imDest = imaging_python_to_c(dest)) ||
+        !(imSrc = imaging_python_to_c(src)))
         return NULL;
 
     /* check the various image modes, make sure they make sense */

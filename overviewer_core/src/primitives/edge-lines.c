@@ -58,7 +58,7 @@ edge_lines_draw(void* data, RenderState* state, PyObject* src, PyObject* mask, P
         if (side_block != state->block && (is_transparent(side_block) || render_mode_hidden(state->rendermode, x + 1, y, z)) &&
             /* WARNING: ugly special case approaching */
             /* if the block is a slab and the side block is a stair don't draw anything, it can give very ugly results */
-            !(block_class_is_subset(state->block, (mc_block_t[]){block_wooden_slab, block_stone_slab}, 2) && (block_class_is_subset(side_block, block_class_stair, block_class_stair_len)))) {
+            !(block_class_is_subset(state->block, (mc_block_t[]){block_wooden_slab, block_stone_slab}, 2) && (block_class_has(side_block, BLOCK_CLASS_STAIR)))) {
             ov_DrawLine(img_i, state->imgx + 12, state->imgy + 1 + increment, state->imgx + 22 + 1, state->imgy + 5 + 1 + increment, &ink, 1);
             ov_DrawLine(img_i, state->imgx + 12, state->imgy + increment, state->imgx + 22 + 1, state->imgy + 5 + increment, &ink, 1);
         }
@@ -69,7 +69,7 @@ edge_lines_draw(void* data, RenderState* state, PyObject* src, PyObject* mask, P
             /* WARNING: ugly special case approaching */
             /* if the block is a slab and the side block is a stair don't draw anything, it can give very ugly results */
             !(
-                block_class_is_subset(state->block, (mc_block_t[]){block_stone_slab, block_wooden_slab}, 2) && (block_class_is_subset(side_block, block_class_stair, block_class_stair_len)))) {
+                block_class_is_subset(state->block, (mc_block_t[]){block_stone_slab, block_wooden_slab}, 2) && (block_class_has(side_block, BLOCK_CLASS_STAIR)))) {
             ov_DrawLine(img_i, state->imgx, state->imgy + 6 + 1 + increment, state->imgx + 12 + 1, state->imgy + 1 + increment, &ink, 1);
             ov_DrawLine(img_i, state->imgx, state->imgy + 6 + increment, state->imgx + 12 + 1, state->imgy + increment, &ink, 1);
         }
