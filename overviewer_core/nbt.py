@@ -22,6 +22,18 @@ import zlib
 import numpy
 
 
+def _decode_nbt_string(value):
+    decoded = value.decode('utf-8', 'surrogatepass')
+    if decoded.isascii():
+        return decoded
+    return decoded.encode('utf-16', 'surrogatepass').decode('utf-16')
+
+
+@functools.lru_cache(maxsize=8192)
+def _decode_cached_nbt_string(value):
+    return _decode_nbt_string(value)
+
+
 # decorator that turns the first argument from a string into an open file
 # handle
 def _file_loader(func):
@@ -83,35 +95,27 @@ class NBTFileReader(object):
     _long   = struct.Struct(">q")
     _float  = struct.Struct(">f")
     _double = struct.Struct(">d")
+    _list_dtypes = {
+        1: numpy.dtype("i1"),
+        2: numpy.dtype(">i2"),
+        3: numpy.dtype(">i4"),
+        4: numpy.dtype(">i8"),
+        5: numpy.dtype(">f4"),
+        6: numpy.dtype(">f8"),
+    }
 
     def __init__(self, fileobj, is_gzip=True):
         """Create a NBT parsing object with the given file-like
         object. Setting is_gzip to False parses the file as a zlib
         stream instead."""
         if is_gzip:
+            if not hasattr(fileobj, "read"):
+                fileobj = BytesIO(fileobj)
             self._file = gzip.GzipFile(fileobj=fileobj, mode='rb')
         else:
-            # pure zlib stream -- maybe later replace this with
-            # a custom zlib file object?
-            data = zlib.decompress(fileobj.read())
+            compressed = fileobj.read() if hasattr(fileobj, "read") else fileobj
+            data = zlib.decompress(compressed)
             self._file = BytesIO(data)
-
-        # mapping of NBT type ids to functions to read them out
-        self._read_tagmap = {
-            0: self._read_tag_end,
-            1: self._read_tag_byte,
-            2: self._read_tag_short,
-            3: self._read_tag_int,
-            4: self._read_tag_long,
-            5: self._read_tag_float,
-            6: self._read_tag_double,
-            7: self._read_tag_byte_array,
-            8: self._read_tag_string,
-            9: self._read_tag_list,
-            10: self._read_tag_compound,
-            11: self._read_tag_int_array,
-            12: self._read_tag_long_array,
-        }
 
     # These private methods read the payload only of the following types
     def _read_tag_end(self):
@@ -159,36 +163,38 @@ class NBTFileReader(object):
 
     def _read_tag_string(self):
         length = self._ushort.unpack(self._file.read(2))[0]
-        # Read the string
         string = self._file.read(length)
-        # decode it and return
-        # We need to account for Java's strings being UTF-16 by default which is naively encoded into UTF-8.
-        # This leads to UTF-16 surrogate pairs encoded again as UTF-8. This abomination fixes it and allows what few
-        # emoji that Minecraft supports to pass through. h/t to ChrisE for figuring out the encoding mechanism.
-        return string.decode('utf-8', 'surrogatepass').encode('utf-16', 'surrogatepass').decode('utf-16')
+        if length <= 256:
+            return _decode_cached_nbt_string(string)
+        return _decode_nbt_string(string)
 
     def _read_tag_list(self):
         tagid = self._read_tag_byte()
         length = self._uint.unpack(self._file.read(4))[0]
 
+        dtype = self._list_dtypes.get(tagid)
+        if dtype is not None:
+            values = self._file.read(length * dtype.itemsize)
+            return numpy.frombuffer(values, dtype=dtype).tolist()
+
         read_method = self._read_tagmap[tagid]
-        l = [None] * length
-        for i in range(length):
-            l[i] = read_method()
-        return l
+        return [read_method(self) for _ in range(length)]
 
     def _read_tag_compound(self):
         # Build a dictionary of all the tag names mapping to their payloads
         tags = {}
         while True:
             # Read a tag
-            tagtype = ord(self._file.read(1))
+            tagtype_data = self._file.read(1)
+            if not tagtype_data:
+                raise EOFError("Unexpected end of NBT compound")
+            tagtype = tagtype_data[0]
 
             if tagtype == 0:
                 break
 
             name = self._read_tag_string()
-            payload = self._read_tagmap[tagtype]()
+            payload = self._read_tagmap[tagtype](self)
             tags[name] = payload
 
         return tags
@@ -201,7 +207,10 @@ class NBTFileReader(object):
         """
         # Read tag type
         try:
-            tagtype = ord(self._file.read(1))
+            tagtype_data = self._file.read(1)
+            if not tagtype_data:
+                raise EOFError("NBT document is empty")
+            tagtype = tagtype_data[0]
             if tagtype != 10:
                 raise Exception("Expected a tag compound")
             # Read the tag name
@@ -210,6 +219,22 @@ class NBTFileReader(object):
             return (name, payload)
         except (struct.error, ValueError, TypeError, EOFError) as e:
             raise CorruptNBTError("could not parse nbt: %s" % (str(e),))
+
+    _read_tagmap = (
+        _read_tag_end,
+        _read_tag_byte,
+        _read_tag_short,
+        _read_tag_int,
+        _read_tag_long,
+        _read_tag_float,
+        _read_tag_double,
+        _read_tag_byte_array,
+        _read_tag_string,
+        _read_tag_list,
+        _read_tag_compound,
+        _read_tag_int_array,
+        _read_tag_long_array,
+    )
 
 
 # For reference, the MCR format is outlined at
@@ -304,8 +329,6 @@ class MCRFileReader(object):
         z = z % 32
         location = self._locations[int(x + z * 32)]
         offset = (location >> 8) * 4096
-        sectors = location & 0xff
-
         if offset == 0:
             return None
 
@@ -340,8 +363,6 @@ class MCRFileReader(object):
         data = self._file.read(data_length - 1)
         if len(data) != data_length - 1:
             raise CorruptRegionError("chunk length is invalid")
-        data = BytesIO(data)
-
         try:
             return NBTFileReader(data, is_gzip=is_gzip).read_all()
         except CorruptionError:
