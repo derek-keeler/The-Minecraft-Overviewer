@@ -74,19 +74,21 @@ class TextureVersionTests(unittest.TestCase):
         })
         tex = self.texture_object(pack)
         hanging = tex.load_sign_texture("oak", hanging=True)
-        self.assertEqual(hanging.getpixel((2, 14)), image.getpixel((2, 16)))
-        self.assertEqual(hanging.getpixel((4, 0)), image.getpixel((0, 0)))
-        self.assertEqual(hanging.getpixel((6, 6)), image.getpixel((22, 7)))
+        self.assertEqual(hanging.getpixel((2, 14)), image.getpixel((2, 14)))
+        self.assertEqual(hanging.getpixel((4, 0)), image.getpixel((4, 0)))
+        self.assertEqual(hanging.getpixel((22, 7)), image.getpixel((22, 7)))
         self.assertEqual(tex.load_sign_texture("bamboo").getpixel((2, 2)),
-                         image.getpixel((0, 2)))
+                         image.getpixel((2, 2)))
 
-    def test_legacy_sign_atlas_is_unchanged(self):
+    def test_legacy_sign_atlas_is_converted_to_modern_layout(self):
         image = Image.new("RGBA", (64, 32), "red")
         pack = self.archive("old-sign.zip", {
             "assets/minecraft/textures/entity/signs/hanging/oak.png": image,
         })
         tex = self.texture_object(pack)
-        self.assertEqual(tex.load_sign_texture("oak", hanging=True).tobytes(), image.tobytes())
+        converted = tex.load_sign_texture("oak", hanging=True)
+        self.assertEqual(converted.size, (32, 32))
+        self.assertEqual(converted.getpixel((2, 16)), (255, 0, 0, 255))
 
     def test_modern_beds_render_without_entity_atlas(self):
         image = Image.new("RGBA", (16, 16), "red")

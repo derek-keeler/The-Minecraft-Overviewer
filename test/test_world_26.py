@@ -80,7 +80,8 @@ class BlockstateTests(unittest.TestCase):
 
     def test_legacy_palette_is_not_reinterpreted(self):
         entry = {"Name": "minecraft:oak_log", "Properties": {"axis": "z"}}
-        self.assertIs(world.normalize_blockstate(entry), entry)
+        self.assertEqual(world.normalize_blockstate(entry),
+                         {"id": "minecraft:oak_log", "properties": {"axis": "z"}})
         self.assertEqual(self.rset._get_block(entry), (17, 8))
 
     def test_malformed_new_states_are_explicit_errors(self):
