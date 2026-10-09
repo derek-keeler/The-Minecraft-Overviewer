@@ -65,9 +65,23 @@ def write_config(path, name, world, output, texture):
     )
 
 
+def write_wrapped_config(path, config, world, output, texture):
+    # Run the given config unchanged, then point its world(s), output and
+    # textures at the profiling inputs.
+    path.write_text(
+        "exec(compile(open(%r, 'rb').read(), %r, 'exec'), globals(), locals())\n"
+        "for _world_name in list(worlds):\n"
+        "    worlds[_world_name] = %r\n"
+        "outputdir = %r\n"
+        "texturepath = %r\n"
+        % (str(config), str(config), str(world), str(output), str(texture)),
+        encoding="utf-8",
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Profile a numbered overworld render of a test world.")
+        description="Profile a numbered render of a test world.")
     parser.add_argument(
         "--world", type=Path,
         help="World directory (containing level.dat); defaults to tmp/%s." % DEFAULT_WORLD)
@@ -75,6 +89,11 @@ def parse_args():
         "--name",
         help="Name for the output and profile files; defaults to the world "
              "directory's name.")
+    parser.add_argument(
+        "--config", type=Path,
+        help="Overviewer config whose renders to profile (for example a "
+             "production config); its worlds, outputdir and texturepath are "
+             "replaced. Defaults to a single normal-mode overworld render.")
     parser.add_argument(
         "--python", type=Path, default=Path(".venv/bin/python3.15"),
         help="Python executable containing profiling.sampling.")
@@ -124,7 +143,11 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="tmo-profile-") as temp_directory:
         config = Path(temp_directory) / "overviewer_config.py"
-        write_config(config, name, world, output.resolve(), texture)
+        if args.config:
+            write_wrapped_config(config, args.config.resolve(), world,
+                                 output.resolve(), texture)
+        else:
+            write_config(config, name, world, output.resolve(), texture)
 
         environment = None
         if args.profiler == "perf":
