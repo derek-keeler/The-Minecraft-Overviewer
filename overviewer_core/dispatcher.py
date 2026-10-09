@@ -13,6 +13,7 @@
 #    You should have received a copy of the GNU General Public License along
 #    with the Overviewer.  If not, see <http://www.gnu.org/licenses/>.
 
+import collections
 import multiprocessing
 import multiprocessing.managers
 import queue
@@ -32,12 +33,14 @@ class Dispatcher:
     def __init__(self):
         super(Dispatcher, self).__init__()
 
-        # list of (tileset, workitem) tuples
-        # keeps track of dispatched but unfinished jobs
-        self._running_jobs = []
-        # list of (tileset, workitem, dependencies) tuples
-        # keeps track of jobs waiting to run after dependencies finish
-        self._pending_jobs = []
+        # (tileset, workitem) of every job added and not yet finished
+        self._unfinished_jobs = set()
+        # jobs with no unfinished dependencies, waiting to be dispatched
+        self._ready_jobs = collections.deque()
+        # the jobs waiting on each unfinished job, and how many unfinished
+        # dependencies each waiting job has
+        self._dependents = {}
+        self._blocking_counts = {}
 
     def render_all(self, tilesetlist, observer):
         """Render all of the tilesets in the given
@@ -71,47 +74,48 @@ class Dispatcher:
 
             observer.start(total_jobs)
             for tileset, workitem, deps in iterate_merged_work(phase_tilesets, phase):
-                self._pending_jobs.append((tileset, workitem, deps))
+                self._add_job(tileset, workitem, deps)
                 observer.add(self._dispatch_jobs())
 
             # after each phase, wait for the work to finish
-            while self._pending_jobs or self._running_jobs:
+            while self._unfinished_jobs:
                 observer.add(self._dispatch_jobs())
 
             observer.finish()
 
+    def _add_job(self, tileset, workitem, deps):
+        # Only dependencies that are queued or in progress are waited for (see
+        # the worker interface in tileset.py)
+        job = (tileset, workitem)
+        blocking = [(tileset, dep) for dep in deps if (tileset, dep) in self._unfinished_jobs]
+        for dep in blocking:
+            self._dependents.setdefault(dep, []).append(job)
+        if blocking:
+            self._blocking_counts[job] = len(blocking)
+        else:
+            self._ready_jobs.append(job)
+        self._unfinished_jobs.add(job)
+
     def _dispatch_jobs(self):
-        # helper function to dispatch pending jobs when their
-        # dependencies are met, and to manage self._running_jobs
-        dispatched_jobs = []
+        # helper function to dispatch jobs whose dependencies are met, and to
+        # release the jobs waiting on the ones that finish
         finished_jobs = []
-
-        pending_jobs_nodeps = [(j[0], j[1]) for j in self._pending_jobs]
-
-        for pending_job in self._pending_jobs:
-            tileset, workitem, deps = pending_job
-
-            # see if any of the deps are in _running_jobs or _pending_jobs
-            for dep in deps:
-                if (tileset, dep) in self._running_jobs or (tileset, dep) in pending_jobs_nodeps:
-                    # it is! don't dispatch this item yet
-                    break
-            else:
-                # it isn't! all dependencies are finished
+        if self._ready_jobs:
+            while self._ready_jobs:
+                tileset, workitem = self._ready_jobs.popleft()
                 finished_jobs += self.dispatch(tileset, workitem)
-                self._running_jobs.append((tileset, workitem))
-                dispatched_jobs.append(pending_job)
-
-        # make sure to at least get finished jobs, even if we don't
-        # submit any new ones...
-        if not dispatched_jobs:
+        else:
+            # make sure to at least get finished jobs, even if we don't
+            # submit any new ones...
             finished_jobs += self.dispatch(None, None)
 
-        # clean out the appropriate lists
         for job in finished_jobs:
-            self._running_jobs.remove(job)
-        for job in dispatched_jobs:
-            self._pending_jobs.remove(job)
+            self._unfinished_jobs.remove(job)
+            for dependent in self._dependents.pop(job, ()):
+                self._blocking_counts[dependent] -= 1
+                if not self._blocking_counts[dependent]:
+                    del self._blocking_counts[dependent]
+                    self._ready_jobs.append(dependent)
 
         return len(finished_jobs)
 
