@@ -160,6 +160,16 @@ def dict_subset(d, keys):
     return n
 
 
+def get_cache_dir():
+    """Return the per-user Overviewer cache directory
+    ($XDG_CACHE_HOME/overviewer, by default ~/.cache/overviewer),
+    creating it if needed."""
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(base, "overviewer")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def pid_exists(pid):    # http://stackoverflow.com/a/6940314/1318435
     """Check whether pid exists in the current process table."""
     if pid < 0:
