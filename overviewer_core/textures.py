@@ -19,6 +19,7 @@ import os
 import os.path
 import zipfile
 from io import BytesIO
+import hashlib
 import math
 import pickle
 from random import randint
@@ -125,27 +126,108 @@ class Textures(object):
                 try:
                     self.load_generated(path)
                     return
-                except (OSError, EOFError, pickle.UnpicklingError) as e:
+                except Exception as e:
                     # e.g. a remote worker without access to the file
                     logging.debug("Could not load generated textures from %r (%s); regenerating.", path, e)
             self.generate()
 
-    def save_generated(self, path):
+    def save_generated(self, path, cache_key=None):
         """Writes the output of generate() to path, so that unpickled
         copies of this object (one per worker process) can load it
         instead of regenerating every texture."""
         data = dict((attr, getattr(self, attr)) for attr in self._generated_attrs if hasattr(self, attr))
-        tmp_path = path + ".tmp"
+        data['cache_key'] = cache_key
+        # unique per process, since concurrent runs may share a cache entry
+        tmp_path = "%s.%d.tmp" % (path, os.getpid())
         with open(tmp_path, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp_path, path)
         self.generated_path = path
 
-    def load_generated(self, path):
+    def load_generated(self, path, cache_key=None):
         with open(path, "rb") as f:
             data = pickle.load(f)
+        if cache_key is not None and data.pop('cache_key', None) != cache_key:
+            raise ValueError("cached textures were generated from different inputs")
+        data.pop('cache_key', None)
         for attr, val in data.items():
             setattr(self, attr, val)
+
+    # bump when the layout of the saved textures changes
+    _cache_format = 1
+    # keep at most this many cached texture sets (each is about 80 MB)
+    _cache_entries = 8
+
+    def cache_key(self, overviewer_version):
+        """A key identifying everything generate() depends on: the
+        Overviewer version, the texture options, and the contents of every
+        archive find_file() may read from. Returns None when textures may
+        come from a plain directory, whose contents we don't fingerprint."""
+        programdir = util.get_program_path()
+        bundled = self._bundled_texture_dirs()
+        archives = []
+        for source in self._texture_sources():
+            if os.path.isfile(source):
+                digest = hashlib.sha256()
+                with open(source, "rb") as f:
+                    for block in iter(lambda: f.read(1 << 20), b""):
+                        digest.update(block)
+                archives.append(digest.hexdigest())
+            elif source in bundled:
+                continue  # part of this Overviewer version
+            elif source == programdir:
+                # only searched for extracted textures
+                if os.path.exists(os.path.join(programdir, "assets")):
+                    return None
+            elif os.path.isdir(source):
+                return None
+        key = repr((self._cache_format, overviewer_version, sys.version_info[:2],
+                    self.rotation, tuple(self.bgcolor), self.texture_size, archives))
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    def generate_cached(self, cache_dir, overviewer_version):
+        """generate(), reusing a copy saved in cache_dir by an earlier run
+        with the same inputs, and saving one for later runs otherwise."""
+        key = self.cache_key(overviewer_version)
+        if key is None:
+            logging.debug("Textures come from a directory; not caching them.")
+            self.generate()
+            return
+        path = os.path.join(cache_dir, "textures-%s.pickle" % key[:32])
+        if os.path.isfile(path):
+            try:
+                self.load_generated(path, key)
+                self.generated = True
+                self.generated_path = path
+                os.utime(path)  # mark as recently used for pruning
+                logging.info("Loaded cached textures from %s", path)
+                return
+            except Exception as e:
+                logging.warning("Ignoring unusable cached textures %s (%s).", path, e)
+
+        logging.info("Generating textures...")
+        self.generate()
+        try:
+            self.save_generated(path, key)
+        except OSError as e:
+            logging.warning("Could not cache generated textures in %s (%s).", cache_dir, e)
+            return
+        self._prune_cache(cache_dir)
+
+    def _prune_cache(self, cache_dir):
+        entries = []
+        for name in os.listdir(cache_dir):
+            if name.startswith("textures-") and name.endswith(".pickle"):
+                path = os.path.join(cache_dir, name)
+                try:
+                    entries.append((os.path.getmtime(path), path))
+                except OSError:
+                    pass
+        for _, path in sorted(entries, reverse=True)[self._cache_entries:]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     ##
     ## The big one: generate()
@@ -217,40 +299,10 @@ class Textures(object):
           selected older jar only fails if a required texture is unavailable.
         
         """
-        # Bundled assets (including Overviewer's water/lava images) take
-        # precedence, avoiding jar lookups for files supplied by Overviewer.
         # Try renamed alternatives within each pack before the next source so
         # texturepath keeps priority over automatically discovered jars.
         filenames = (filename,) if isinstance(filename, str) else filename
-        programdir = util.get_program_path()
-        sources = [os.path.join(programdir, "overviewer_core", "data", "textures")]
-        if hasattr(sys, "frozen"):
-            sources.append(os.path.join(programdir, "textures"))
-        if self.find_file_local_path:
-            sources.append(self.find_file_local_path)
-        sources.extend(self.jars)
-        sources.append(programdir)
-        if sys.platform.startswith("darwin"):
-            sources.append("/Applications/Minecraft")
-
-        if sys.platform.startswith("win"):
-            versiondir = os.path.join(os.environ.get("APPDATA", ""), ".minecraft", "versions")
-        else:
-            versiondir = os.path.join(os.environ.get("HOME", ""), ".minecraft", "versions")
-            if not os.path.isdir(versiondir) and sys.platform.startswith("darwin"):
-                versiondir = os.path.join(os.environ.get("HOME", ""), "Library",
-                                          "Application Support", "minecraft", "versions")
-        if os.path.isdir(versiondir):
-            versions = []
-            for version in os.listdir(versiondir):
-                if version.count(".") in (1, 2) and all(p.isdigit() for p in version.split(".")):
-                    parts = tuple(map(int, version.split(".")))
-                    if parts >= (1, 8):
-                        versions.append((parts, version))
-            for _, version in sorted(versions, reverse=True):
-                sources.append(os.path.join(versiondir, version, version + ".jar"))
-
-        for source in dict.fromkeys(sources):
+        for source in self._texture_sources():
             if os.path.isdir(source):
                 for filename in filenames:
                     path = os.path.join(source, filename)
@@ -276,6 +328,45 @@ class Textures(object):
         raise TextureException(
             "Could not find any texture variant: %s. Set texturepath to a Minecraft "
             "client jar or resource pack containing these assets." % ", ".join(filenames))
+
+    def _bundled_texture_dirs(self):
+        programdir = util.get_program_path()
+        dirs = [os.path.join(programdir, "overviewer_core", "data", "textures")]
+        if hasattr(sys, "frozen"):
+            dirs.append(os.path.join(programdir, "textures"))
+        return dirs
+
+    def _texture_sources(self):
+        """The directories and archives find_file() searches, in order."""
+        # Bundled assets (including Overviewer's water/lava images) take
+        # precedence, avoiding jar lookups for files supplied by Overviewer.
+        programdir = util.get_program_path()
+        sources = self._bundled_texture_dirs()
+        if self.find_file_local_path:
+            sources.append(self.find_file_local_path)
+        sources.extend(self.jars)
+        sources.append(programdir)
+        if sys.platform.startswith("darwin"):
+            sources.append("/Applications/Minecraft")
+
+        if sys.platform.startswith("win"):
+            versiondir = os.path.join(os.environ.get("APPDATA", ""), ".minecraft", "versions")
+        else:
+            versiondir = os.path.join(os.environ.get("HOME", ""), ".minecraft", "versions")
+            if not os.path.isdir(versiondir) and sys.platform.startswith("darwin"):
+                versiondir = os.path.join(os.environ.get("HOME", ""), "Library",
+                                          "Application Support", "minecraft", "versions")
+        if os.path.isdir(versiondir):
+            versions = []
+            for version in os.listdir(versiondir):
+                if version.count(".") in (1, 2) and all(p.isdigit() for p in version.split(".")):
+                    parts = tuple(map(int, version.split(".")))
+                    if parts >= (1, 8):
+                        versions.append((parts, version))
+            for _, version in sorted(versions, reverse=True):
+                sources.append(os.path.join(versiondir, version, version + ".jar"))
+
+        return list(dict.fromkeys(sources))
 
     def load_image_texture(self, filename):
         # Textures may be animated or in a different resolution than 16x16.  
