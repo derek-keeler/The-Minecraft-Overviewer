@@ -193,11 +193,14 @@ def _iterate_group_units(members, phase):
 
 def _strip_work(members, strip):
     """(tileset, workitem, dependencies) for a column strip's render-tiles in
-    all of the given tilesets."""
+    all of the given tilesets, top to bottom, with each tile given for every
+    tileset in turn so its chunks are still cached for the next one."""
     work = []
-    for member in members:
-        work.extend((member, workitem, deps) for _, (workitem, deps) in member.strip_items(strip))
-    return work
+    for i, member in enumerate(members):
+        work.extend((row, i, member, workitem, deps)
+                    for row, (workitem, deps) in member.strip_items(strip))
+    work.sort(key=lambda w: w[:2])
+    return [w[2:] for w in work]
 
 
 class MultiprocessingDispatcherManager(multiprocessing.managers.BaseManager):
@@ -307,8 +310,8 @@ class MultiprocessingDispatcherProcess(multiprocessing.Process):
                     # this is a end-of-jobs sentinel
                     return
 
-                # unpack job
-                tv, ti, workitems = job
+                # unpack job: (tileset index, work item) pairs
+                tv, work = job
 
                 if tv != self.tileset_version:
                     # our tilesets changed!
@@ -316,8 +319,8 @@ class MultiprocessingDispatcherProcess(multiprocessing.Process):
                     assert tv == self.tileset_version
 
                 # do job
-                ret = [self.tilesets[ti].do_work(workitem) for workitem in workitems]
-                result = (ti, workitems, ret,)
+                ret = [self.tilesets[ti].do_work(workitem) for ti, workitem in work]
+                result = (work, ret,)
                 self.result_queue.put(result, False)
             except queue.Empty:
                 pass
@@ -345,7 +348,8 @@ class MultiprocessingDispatcher(Dispatcher):
         # to workers and not yet finished
         self.outstanding_jobs = 0
         self.num_workers = 0
-        # (tileset, group, [workitems]) being collected for a single worker
+        # (bundle key, [(tileset, workitem)], {id(tileset): count}) being
+        # collected for a single worker
         self._bundle = None
         self.manager = MultiprocessingDispatcherManager(address=address, authkey=authkey)
         self.manager.start()
@@ -382,7 +386,7 @@ class MultiprocessingDispatcher(Dispatcher):
     def setup_tilesets(self, tilesets):
         self.manager.set_tilesets(tilesets)
 
-    # most work items sent to a worker in one job message
+    # most work items of one tileset sent to a worker in one job message
     max_bundle = 64
 
     def dispatch(self, tileset, workitem):
@@ -395,18 +399,25 @@ class MultiprocessingDispatcher(Dispatcher):
 
         # Consecutive work items in the same group (see
         # TileSet.get_work_group()) are sent together, so that one worker
-        # renders them and can reuse the chunks they share.
+        # renders them and can reuse the chunks they share. That includes
+        # other tilesets' items for the same group if they read the same
+        # chunks (see TileSet.get_locality_key()).
         get_work_group = getattr(tileset, "get_work_group", None)
         group = get_work_group(workitem) if get_work_group else None
         if group is None:
-            self._send_job(tileset, [workitem])
+            self._send_job([(tileset, workitem)])
         else:
-            if self._bundle is not None and (self._bundle[0] is not tileset or self._bundle[1] != group):
+            get_locality_key = getattr(tileset, "get_locality_key", None)
+            locality = get_locality_key() if get_locality_key else None
+            key = (locality if locality is not None else id(tileset), group)
+            if self._bundle is not None and self._bundle[0] != key:
                 self._flush_bundle()
             if self._bundle is None:
-                self._bundle = (tileset, group, [])
-            self._bundle[2].append(workitem)
-            if len(self._bundle[2]) >= self.max_bundle:
+                self._bundle = (key, [], {})
+            _, work, counts = self._bundle
+            work.append((tileset, workitem))
+            counts[id(tileset)] = counts.get(id(tileset), 0) + 1
+            if counts[id(tileset)] >= self.max_bundle:
                 self._flush_bundle()
 
         # make sure the queue doesn't fill up too much
@@ -417,13 +428,15 @@ class MultiprocessingDispatcher(Dispatcher):
 
     def _flush_bundle(self):
         if self._bundle is not None:
-            tileset, _, workitems = self._bundle
+            work = self._bundle[1]
             self._bundle = None
-            self._send_job(tileset, workitems)
+            self._send_job(work)
 
-    def _send_job(self, tileset, workitems):
-        tileset_index = self.manager.tilesets.index(tileset)
-        self.job_queue.put((self.manager.tileset_version, tileset_index, workitems), False)
+    def _send_job(self, work):
+        """Sends [(tileset, workitem), ...] to a worker as one job."""
+        tilesets = self.manager.tilesets
+        work = [(tilesets.index(tileset), workitem) for tileset, workitem in work]
+        self.job_queue.put((self.manager.tileset_version, work), False)
         self.outstanding_jobs += 1
 
     def _handle_messages(self, timeout=0.01):
@@ -440,9 +453,9 @@ class MultiprocessingDispatcher(Dispatcher):
 
                     if result is not None:
                         # completed job
-                        ti, workitems, ret = result
-                        tileset = self.manager.tilesets[ti]
-                        finished_jobs.extend((tileset, workitem) for workitem in workitems)
+                        work, ret = result
+                        tilesets = self.manager.tilesets
+                        finished_jobs.extend((tilesets[ti], workitem) for ti, workitem in work)
                         self.outstanding_jobs -= 1
                     else:
                         # new worker

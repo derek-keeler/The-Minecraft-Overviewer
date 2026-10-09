@@ -1,16 +1,23 @@
+import pickle
 import queue
 import shutil
 import tempfile
 import unittest
 
-from overviewer_core import dispatcher, tileset, world
+from overviewer_core import cache, dispatcher, tileset, world
 from . import test_tileset
 
 
 class FakeTileset(object):
     """Work items are (strip, n) tuples; strip None means ungrouped."""
+    def __init__(self, locality_key=None):
+        self.locality_key = locality_key
+
     def get_work_group(self, workitem):
         return workitem[0]
+
+    def get_locality_key(self):
+        return self.locality_key
 
 
 class FakeManager(object):
@@ -24,8 +31,10 @@ class BundlingTest(unittest.TestCase):
     def setUp(self):
         # a dispatcher without worker processes, recording the job messages
         self.tileset = FakeTileset()
+        self.overworld = [FakeTileset("overworld"), FakeTileset("overworld")]
+        self.nether = FakeTileset("nether")
         d = dispatcher.MultiprocessingDispatcher.__new__(dispatcher.MultiprocessingDispatcher)
-        d.manager = FakeManager([self.tileset])
+        d.manager = FakeManager([self.tileset] + self.overworld + [self.nether])
         d.job_queue = queue.Queue()
         d.result_queue = queue.Queue()
         d.signal_queue = queue.Queue()
@@ -37,7 +46,7 @@ class BundlingTest(unittest.TestCase):
     def jobs(self):
         out = []
         while not self.dispatcher.job_queue.empty():
-            out.append(self.dispatcher.job_queue.get()[2])
+            out.append(self.dispatcher.job_queue.get()[1])
         return out
 
     def test_consecutive_items_of_a_group_share_a_job(self):
@@ -45,7 +54,9 @@ class BundlingTest(unittest.TestCase):
             self.dispatcher.dispatch(self.tileset, item)
         self.dispatcher.dispatch(None, None)
         # the ungrouped item is sent straight away without splitting strip "a"
-        self.assertEqual(self.jobs(), [[(None, 3)], [("a", 1), ("a", 2), ("a", 4)], [("b", 5)]])
+        self.assertEqual(self.jobs(), [[(0, (None, 3))],
+                                       [(0, ("a", 1)), (0, ("a", 2)), (0, ("a", 4))],
+                                       [(0, ("b", 5))]])
         self.assertEqual(self.dispatcher.outstanding_jobs, 3)
 
     def test_bundles_are_capped(self):
@@ -60,10 +71,37 @@ class BundlingTest(unittest.TestCase):
         self.dispatcher.dispatch(self.tileset, ("a", 2))
         self.dispatcher.dispatch(None, None)
         job = self.dispatcher.job_queue.get()
-        self.dispatcher.result_queue.put((job[1], job[2], [None, None]))
+        self.dispatcher.result_queue.put((job[1], [None, None]))
         finished = self.dispatcher._handle_messages(timeout=0.0)
         self.assertEqual(finished, [(self.tileset, ("a", 1)), (self.tileset, ("a", 2))])
         self.assertEqual(self.dispatcher.outstanding_jobs, 0)
+
+    def test_tilesets_reading_the_same_chunks_share_a_job(self):
+        first, second = self.overworld
+        for tileset, item in [(first, ("a", 1)), (second, ("a", 1)), (first, ("a", 2)),
+                              (self.nether, ("a", 1)), (second, ("a", 2))]:
+            self.dispatcher.dispatch(tileset, item)
+        self.dispatcher.dispatch(None, None)
+        self.assertEqual(self.jobs(), [[(1, ("a", 1)), (2, ("a", 1)), (1, ("a", 2))],
+                                       [(3, ("a", 1))],
+                                       [(2, ("a", 2))]])
+
+    def test_tilesets_without_a_locality_key_are_not_grouped(self):
+        other = FakeTileset()
+        self.dispatcher.manager.tilesets.append(other)
+        for tileset in (self.tileset, other):
+            self.dispatcher.dispatch(tileset, ("a", 1))
+        self.dispatcher.dispatch(None, None)
+        self.assertEqual(self.jobs(), [[(0, ("a", 1))], [(4, ("a", 1))]])
+
+    def test_bundles_are_capped_per_tileset(self):
+        self.dispatcher.max_bundle = 2
+        first, second = self.overworld
+        for n in range(3):
+            self.dispatcher.dispatch(first, ("a", n))
+            self.dispatcher.dispatch(second, ("a", n))
+        self.dispatcher.dispatch(None, None)
+        self.assertEqual([len(job) for job in self.jobs()], [3, 3])
 
 
 class RecordingDispatcher(dispatcher.Dispatcher):
@@ -195,6 +233,23 @@ class MergedWorkTest(unittest.TestCase):
         # other groups are interleaved, not run one after another
         firsts = [next(i for i, (t, _) in enumerate(order) if t is ts) for ts in tilesets]
         self.assertLess(max(firsts), len(order) // 4)
+
+    def test_each_tile_is_given_for_every_tileset_in_turn(self):
+        tilesets = [self.tileset() for _ in range(3)]
+        order = self.merged(tilesets)
+        for i, (ts, item) in enumerate(order):
+            if len(item) == ts.treedepth and ts is tilesets[0]:
+                self.assertEqual([(t, it) for t, it in order[i:i + 3]],
+                                 [(t, item) for t in tilesets])
+
+    def test_workers_share_one_chunk_cache(self):
+        """Workers get all tilesets in one pickle, so tilesets reading the
+        same chunks keep sharing a cache there."""
+        caches = [cache.LRUCache()]
+        cached = world.CachedRegionSet(test_tileset.FakeRegionset(self.chunks), caches)
+        tilesets = [self.tileset(cached), self.tileset(world.RotatedRegionSet(cached, 1))]
+        copies = pickle.loads(pickle.dumps(tilesets))
+        self.assertIs(copies[0].regionset.caches[0], copies[1].regionset._r.caches[0])
 
     def test_changelist_names_each_tile_once(self):
         with tempfile.TemporaryFile() as changelist:
