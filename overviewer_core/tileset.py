@@ -511,16 +511,29 @@ class TileSet(object):
         # render. Iterate over the tiles in using the posttraversal() method.
         # Yield each item. Easy.
         if self.options['renderchecks'] in (0, 2):
+            # Render-tiles are yielded a whole column strip at a time (see
+            # get_work_group()), at the point the traversal reaches the strip's
+            # first tile. Parents still come after all of their children.
+            yielded_strips = set()
             for tilepath in self.dirtytree.posttraversal(robin=True):
-                dependencies = []
-                # These tiles may or may not exist, but the dispatcher won't
-                # care according to the worker interface protocol It will only
-                # wait for the items that do exist and are in the queue.
-                for i in range(4):
-                    dependencies.append(tilepath + (i,))
-                if fd:
-                    write_out(tilepath)
-                yield tilepath, dependencies
+                if len(tilepath) == self.treedepth:
+                    strip = self.get_work_group(tilepath)
+                    if strip in yielded_strips:
+                        continue
+                    yielded_strips.add(strip)
+                    tilepaths = self._strip_tilepaths(strip)
+                else:
+                    tilepaths = [tilepath]
+                for tilepath in tilepaths:
+                    dependencies = []
+                    # These tiles may or may not exist, but the dispatcher won't
+                    # care according to the worker interface protocol It will only
+                    # wait for the items that do exist and are in the queue.
+                    for i in range(4):
+                        dependencies.append(tilepath + (i,))
+                    if fd:
+                        write_out(tilepath)
+                    yield tilepath, dependencies
 
         else:
             # For mode 1, self.dirtytree holds every tile that should exist,
@@ -534,6 +547,32 @@ class TileSet(object):
                     if fd:
                         write_out(tilepath)
                     yield tilepath, dependencies
+
+    # Render-tiles in the same column strip of this many chunk rows (16 tiles)
+    # are rendered by one worker. A chunk is drawn into a dozen vertically
+    # stacked tiles, so keeping them together lets the worker's chunk cache
+    # serve most of them instead of each worker parsing the chunk again.
+    strip_rows = 64
+
+    def get_work_group(self, tilepath):
+        """Returns a key shared by work items that should go to the same
+        worker, or None for items that don't benefit from it."""
+        if len(tilepath) != self.treedepth:
+            return None
+        tile = RenderTile.from_path(tilepath)
+        return (tile.col, tile.row // self.strip_rows)
+
+    def _strip_tilepaths(self, strip):
+        """The dirty render-tiles in the given column strip, top to bottom."""
+        col, band = strip
+        yradius = 2 * 2**self.treedepth
+        tilepaths = []
+        for row in range(band * self.strip_rows, (band + 1) * self.strip_rows, 4):
+            if -yradius <= row < yradius:
+                tilepath = RenderTile.compute_path(col, row, self.treedepth).path
+                if self.dirtytree.query_path(tilepath):
+                    tilepaths.append(tilepath)
+        return tilepaths
 
     def do_work(self, tilepath):
         """Renders the given tile.
