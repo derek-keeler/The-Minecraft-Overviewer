@@ -537,8 +537,12 @@ def main():
     # TODO: optionally more caching layers here
 
     renders = config['renders']
-    for render_name, render in renders.items():
+    logging.info("Preprocessing [1/4]: setting up %d render%s",
+                 len(renders), "" if len(renders) == 1 else "s")
+    for render_number, (render_name, render) in enumerate(renders.items(), 1):
         logging.debug("Found the following render thing: %r", render)
+        logging.info("  [%d/%d] %s: %s of world %r", render_number, len(renders), render_name,
+                     render['dimension'][0], render['worldname_orig'])
 
         # find or create the world object
         try:
@@ -635,9 +639,19 @@ def main():
         return 1
 
     # Do tileset preprocessing here, before we start dispatching jobs
-    logging.info("Preprocessing...")
-    for ts in tilesets:
+    logging.info("Preprocessing [2/4]: scanning chunks for tiles to render")
+    for number, ts in enumerate(tilesets, 1):
+        started = time.time()
         ts.do_preprocessing()
+        if ts.options['renderchecks'] == 3:
+            logging.info("  [%d/%d] %s: not rendered (renderchecks 3)",
+                         number, len(tilesets), ts.options['name'])
+        else:
+            logging.info("  [%d/%d] %s: %d chunks, %d render-tiles%s (%.1fs)",
+                         number, len(tilesets), ts.options['name'], ts.scanned_chunks,
+                         ts.dirtytree.num_tiles,
+                         " to check" if ts.options['renderchecks'] == 1 else "",
+                         time.time() - started)
 
     if args.estimatedirtytiles:
         work_queue_length = sum([sum([x.get_phase_length(p) for p in range(x.get_num_phases())]) for x in tilesets])
@@ -645,6 +659,7 @@ def main():
         return 0
 
     # Output initial static data and configuration
+    logging.info("Preprocessing [3/4]: writing web assets")
     assetMrg.initialize(tilesets)
 
     # multiprocessing dispatcher
@@ -665,6 +680,8 @@ def main():
             # workers fall back to generating their own textures
             logging.warning("Could not write generated textures to the cache directory (%s); "
                             "each worker will generate its own.", e)
+        logging.info("Preprocessing [4/4]: starting %d worker processes",
+                     config['processes'] if config['processes'] > 0 else multiprocessing.cpu_count())
         dispatch = dispatcher.MultiprocessingDispatcher(
             local_procs=config['processes'])
     try:
