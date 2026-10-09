@@ -54,13 +54,8 @@ class Dispatcher:
         # iterate through all possible phases
         num_phases = [tileset.get_num_phases() for tileset in tilesetlist]
         for phase in range(max(num_phases)):
-            # construct a list of iterators to use for this phase
-            work_iterators = []
-            for i, tileset in enumerate(tilesetlist):
-                if phase < num_phases[i]:
-                    def make_work_iterator(tset, p):
-                        return ((tset, workitem) for workitem in tset.iterate_work_items(p))
-                    work_iterators.append(make_work_iterator(tileset, phase))
+            phase_tilesets = [tileset for tileset, phases in zip(tilesetlist, num_phases)
+                              if phase < phases]
 
             # keep track of total jobs, and how many jobs are done
             total_jobs = 0
@@ -75,8 +70,7 @@ class Dispatcher:
                         total_jobs += jobs_for_tileset
 
             observer.start(total_jobs)
-            # go through these iterators round-robin style
-            for tileset, (workitem, deps) in util.roundrobin(work_iterators):
+            for tileset, workitem, deps in iterate_merged_work(phase_tilesets, phase):
                 self._pending_jobs.append((tileset, workitem, deps))
                 observer.add(self._dispatch_jobs())
 
@@ -145,6 +139,61 @@ class Dispatcher:
             tileset.do_work(workitem)
             return [(tileset, workitem)]
         return []
+
+
+def iterate_merged_work(tilesets, phase):
+    """Iterates over (tileset, workitem, dependencies) for the given tilesets'
+    work in a phase.
+
+    Tilesets with the same locality key (see TileSet.get_locality_key()) read
+    the same chunks for a tile, so the render-tiles of a column strip are
+    given for all of them together, when the first of them reaches the strip.
+    Their other work items keep their place in each tileset's own order, so
+    they still follow their dependencies. Tilesets of different worlds,
+    dimensions or north directions take turns a strip or item at a time.
+    """
+    groups = {}
+    for i, tileset in enumerate(tilesets):
+        get_locality_key = getattr(tileset, "get_locality_key", None)
+        key = get_locality_key() if get_locality_key else None
+        if key is None:
+            # not to be grouped with any other tileset
+            key = (None, i)
+        groups.setdefault(key, []).append(tileset)
+
+    group_units = [_iterate_group_units(members, phase) for members in groups.values()]
+    for unit in util.roundrobin(group_units):
+        yield from unit
+
+
+def _iterate_group_units(members, phase):
+    """Iterates over lists of (tileset, workitem, dependencies) for tilesets
+    sharing a locality key: one list per column strip, holding its render-tiles
+    for every member, or one per other work item."""
+    def tagged_units(tileset):
+        if hasattr(tileset, "iterate_work_units"):
+            units = tileset.iterate_work_units(phase)
+        else:
+            units = ((None, item) for item in tileset.iterate_work_items(phase))
+        return ((tileset, strip, item) for strip, item in units)
+
+    given_strips = set()
+    for tileset, strip, item in util.roundrobin([tagged_units(t) for t in members]):
+        if strip is None:
+            workitem, deps = item
+            yield [(tileset, workitem, deps)]
+        elif strip not in given_strips:
+            given_strips.add(strip)
+            yield _strip_work(members, strip)
+
+
+def _strip_work(members, strip):
+    """(tileset, workitem, dependencies) for a column strip's render-tiles in
+    all of the given tilesets."""
+    work = []
+    for member in members:
+        work.extend((member, workitem, deps) for _, (workitem, deps) in member.strip_items(strip))
+    return work
 
 
 class MultiprocessingDispatcherManager(multiprocessing.managers.BaseManager):
