@@ -6,7 +6,7 @@ import os
 import os.path
 import random
 
-from overviewer_core import tileset
+from overviewer_core import cache, tileset, world
 
 # Supporing data
 # chunks list: chunkx, chunkz mapping to chunkmtime
@@ -43,8 +43,9 @@ chunks = {
 ######################
 
 class FakeRegionset(object):
-    def __init__(self, chunks):
+    def __init__(self, chunks, regiondir="world/region"):
         self.chunks = dict(chunks)
+        self.regiondir = regiondir
 
     def get_chunk(self, x,z):
         return NotImplementedError()
@@ -302,3 +303,27 @@ class TilesetTest(unittest.TestCase):
         self.assertGreater(len(seen), 1)
         self.assertLessEqual(max(groups.count(g) for g in seen), ts.strip_rows // 4)
         self.assertIsNone(ts.get_work_group(order[-1]))
+
+    def test_locality_key(self):
+        """Tilesets whose tiles read the same chunks share a locality key.
+        Caching and crops keep it; another dimension or north direction
+        changes it, and tilesets that check tiles on disk have none."""
+        def key(rset, renderchecks=2):
+            self.rs = rset
+            ts = self.get_tileset({'renderchecks': renderchecks}, self.get_outputdir())
+            return ts.get_locality_key()
+
+        overworld = FakeRegionset(chunks)
+        cached = world.CachedRegionSet(overworld, [cache.LRUCache()])
+        cropped = world.CroppedRegionSet(cached, -100, -100, 100, 100)
+        nether = world.CachedRegionSet(FakeRegionset(chunks, "world/DIM-1/region"), [])
+
+        self.assertIsNotNone(key(cached))
+        self.assertEqual(key(cached), key(overworld))
+        self.assertEqual(key(cached), key(cropped))
+        self.assertNotEqual(key(cached), key(nether))
+        self.assertNotEqual(key(cached), key(world.RotatedRegionSet(cached, 1)))
+        self.assertEqual(key(world.RotatedRegionSet(cached, 1)),
+                         key(world.RotatedRegionSet(cropped, 1)))
+        self.assertIsNone(key(cached, renderchecks=1))
+        self.assertIsNone(key(cached, renderchecks=3))
