@@ -166,7 +166,8 @@ def get_cache_dir():
     creating it if needed."""
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     path = os.path.join(base, "overviewer")
-    os.makedirs(path, exist_ok=True)
+    # private: cached pickles are loaded back in
+    os.makedirs(path, mode=0o700, exist_ok=True)
     return path
 
 
