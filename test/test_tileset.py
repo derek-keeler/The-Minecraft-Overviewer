@@ -366,3 +366,15 @@ class TilesetTest(unittest.TestCase):
             lines = changelist.read().decode().splitlines()
         self.assertEqual(len(lines), len(items))
         self.assertEqual(len(set(lines)), len(lines))
+
+    def test_tiles_by_chunks_matches_tiles_by_chunk(self):
+        for count in (0, 1, 50, 2000):
+            chunks = set((self.r.randrange(-200, 200), self.r.randrange(-200, 200))
+                         for _ in range(count))
+            expected = set()
+            for col, row in chunks:
+                expected.update(tileset.get_tiles_by_chunk(col, row))
+            cols, rows = tileset.get_tiles_by_chunks([c for c, _ in chunks], [r for _, r in chunks])
+            tiles = list(zip(cols.tolist(), rows.tolist()))
+            self.assertEqual(len(tiles), len(set(tiles)))
+            self.assertEqual(set(tiles), expected)

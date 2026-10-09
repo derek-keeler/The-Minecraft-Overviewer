@@ -28,6 +28,7 @@ import time
 from collections import namedtuple
 from itertools import chain, product
 
+import numpy
 from PIL import Image
 
 from . import c_overviewer
@@ -946,6 +947,13 @@ class TileSet(object):
 
         max_chunk_mtime = 0
 
+        # Without the stochastic rerender, a tile needs rendering if any
+        # chunk it touches does, so collect those chunks and mark each of
+        # their tiles once. Otherwise check every chunk and tile pair below.
+        collect = not rerender_prob
+        chunkcols = []
+        chunkrows = []
+
         # For each chunk, do this:
         #   For each tile that the chunk touches, do this:
         #       Compare the last modified time of the chunk and tile. If the
@@ -964,6 +972,12 @@ class TileSet(object):
 
             # Convert to diagonal coordinates
             chunkcol, chunkrow = convert_coords(chunkx, chunkz)
+
+            if collect:
+                if markall or chunkmtime > last_rendertime:
+                    chunkcols.append(chunkcol)
+                    chunkrows.append(chunkrow)
+                continue
 
             for c, r in get_tiles_by_chunk(chunkcol, chunkrow):
 
@@ -1006,6 +1020,13 @@ class TileSet(object):
                 # Check mtimes and conditionally add tile to the set
                 if chunkmtime > last_rendertime:
                     dirty.add(tile.path)
+
+        if chunkcols:
+            cols, rows = get_tiles_by_chunks(chunkcols, chunkrows)
+            # Same boundary check as above
+            inside = (cols >= -xradius) & (cols < xradius) & (rows >= -yradius) & (rows < yradius)
+            for c, r in zip(cols[inside].tolist(), rows[inside].tolist()):
+                dirty.add(RenderTile.compute_path(c, r, depth).path)
 
         t = int(time.time() - stime)
         logging.debug(
@@ -1435,6 +1456,40 @@ def get_tiles_by_chunk(chunkcol, chunkrow):
         rowrange = range(tilerow, tilerow + 48 + 1, 4)
 
     return product(colrange, rowrange)
+
+
+def get_tiles_by_chunks(chunkcols, chunkrows):
+    """get_tiles_by_chunk() for many chunks at once. Takes sequences of chunk
+    columns and rows, and returns numpy arrays (tilecols, tilerows) of every
+    tile that any of the chunks touches, each tile once.
+
+    """
+    chunkcols = numpy.asarray(chunkcols, dtype=numpy.int64)
+    chunkrows = numpy.asarray(chunkrows, dtype=numpy.int64)
+    tilecols = chunkcols - chunkcols % 2
+    tilerows = chunkrows - chunkrows % 4
+
+    # Tiles are keyed as one integer, column in the high bits, for numpy's
+    # fast unique(). Rows (and columns) fit in 31 bits with room to spare.
+    def key(cols, rows):
+        return (cols << 32) + (rows + (1 << 31))
+
+    # Each chunk touches a run of tiles from (tilecol, tilerow) downwards, in
+    # one column or, for a chunk in an even column, also the column to its
+    # left. Find the distinct runs first; a run also includes the tile above
+    # if any of its chunks is in a row divisible by 4.
+    even = chunkcols % 2 == 0
+    above = chunkrows % 4 == 0
+    runs = numpy.unique(key(numpy.concatenate([tilecols, tilecols[even] - 2]),
+                            numpy.concatenate([tilerows, tilerows[even]])))
+    runs_above = numpy.unique(key(numpy.concatenate([tilecols[above], tilecols[even & above] - 2]),
+                                  numpy.concatenate([tilerows[above], tilerows[even & above]])))
+
+    # Then the tiles of every run: the next 12 tiles down (48 rows), and the
+    # tile above where needed
+    tiles = numpy.unique(numpy.concatenate(
+        [runs + offset for offset in range(0, 48 + 1, 4)] + [runs_above - 4]))
+    return tiles >> 32, (tiles & ((1 << 32) - 1)) - (1 << 31)
 
 
 def get_chunks_by_tile(tile, regionset):
