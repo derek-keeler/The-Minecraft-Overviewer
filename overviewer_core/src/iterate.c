@@ -32,6 +32,15 @@ static PyObject* fluid_blocks = NULL;
 static PyObject* nospawn_blocks = NULL;
 static PyObject* nodata_blocks = NULL;
 
+/* interned chunk and section keys, looked up for every section loaded */
+static PyObject* key_sections = NULL;
+static PyObject* key_y = NULL;
+static PyObject* key_blocks = NULL;
+static PyObject* key_data = NULL;
+static PyObject* key_skylight = NULL;
+static PyObject* key_blocklight = NULL;
+static PyObject* key_biomes = NULL;
+
 PyObject* init_chunk_render(void) {
 
     PyObject* tmp = NULL;
@@ -47,6 +56,19 @@ PyObject* init_chunk_render(void) {
     if ((!textures)) {
         return NULL;
     }
+
+    block_class_init();
+
+    key_sections = PyUnicode_InternFromString("Sections");
+    key_y = PyUnicode_InternFromString("Y");
+    key_blocks = PyUnicode_InternFromString("Blocks");
+    key_data = PyUnicode_InternFromString("Data");
+    key_skylight = PyUnicode_InternFromString("SkyLight");
+    key_blocklight = PyUnicode_InternFromString("BlockLight");
+    key_biomes = PyUnicode_InternFromString("Biomes");
+    if (!key_sections || !key_y || !key_blocks || !key_data ||
+        !key_skylight || !key_blocklight || !key_biomes)
+        return NULL;
 
     tmp = PyObject_GetAttrString(textures, "max_blockid");
     if (!tmp)
@@ -105,11 +127,11 @@ PyObject* init_chunk_render(void) {
 
 /* helper for load_chunk, loads a section into a chunk */
 static inline void load_chunk_section(ChunkData* dest, int32_t i, PyObject* section) {
-    dest->sections[i].blocks = (PyArrayObject*)PyDict_GetItemString(section, "Blocks");
-    dest->sections[i].data = (PyArrayObject*)PyDict_GetItemString(section, "Data");
-    dest->sections[i].skylight = (PyArrayObject*)PyDict_GetItemString(section, "SkyLight");
-    dest->sections[i].blocklight = (PyArrayObject*)PyDict_GetItemString(section, "BlockLight");
-    dest->sections[i].biomes = (PyArrayObject*)PyDict_GetItemString(section, "Biomes");
+    dest->sections[i].blocks = (PyArrayObject*)PyDict_GetItem(section, key_blocks);
+    dest->sections[i].data = (PyArrayObject*)PyDict_GetItem(section, key_data);
+    dest->sections[i].skylight = (PyArrayObject*)PyDict_GetItem(section, key_skylight);
+    dest->sections[i].blocklight = (PyArrayObject*)PyDict_GetItem(section, key_blocklight);
+    dest->sections[i].biomes = (PyArrayObject*)PyDict_GetItem(section, key_biomes);
     Py_INCREF(dest->sections[i].biomes);
     Py_INCREF(dest->sections[i].blocks);
     Py_INCREF(dest->sections[i].data);
@@ -155,7 +177,7 @@ bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
         return true;
     }
 
-    sections = PyDict_GetItemString(chunk, "Sections");
+    sections = PyDict_GetItem(chunk, key_sections);
     if (sections) {
         sections = PySequence_Fast(sections, "Sections tag was not a list!");
     }
@@ -172,7 +194,7 @@ bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
         PyObject* ycoord = NULL;
         int32_t sectiony = 0;
         PyObject* section = PySequence_Fast_GET_ITEM(sections, i);
-        ycoord = PyDict_GetItemString(section, "Y");
+        ycoord = PyDict_GetItem(section, key_y);
         if (!ycoord)
             continue;
 
@@ -313,7 +335,7 @@ generate_pseudo_data(RenderState* state, uint16_t ancilData) {
         /* portal */
         return check_adjacent_blocks(state, x, y, z, state->block);
 
-    } else if (block_class_is_subset(state->block, block_class_door, block_class_door_len)) {
+    } else if (block_class_has(state->block, BLOCK_CLASS_DOOR)) {
         /* use bottom block data format plus one bit for top/down
          * block (0x8) and one bit for hinge position (0x10)
          */
@@ -359,7 +381,7 @@ generate_pseudo_data(RenderState* state, uint16_t ancilData) {
         pr = pr * pr * 42317861 + pr * 11;
         rotation = 3 & (pr >> 16);
         return rotation;
-    } else if (block_class_is_subset(state->block, block_class_stair, block_class_stair_len)) { /* stairs */
+    } else if (block_class_has(state->block, BLOCK_CLASS_STAIR)) { /* stairs */
         /* 4 ancillary bits will be added to indicate which quarters of the block contain the 
          * upper step. Regular stairs will have 2 bits set & corner stairs will have 1 or 3.
          *     Southwest quarter is part of the upper step - 0x40
@@ -416,10 +438,10 @@ generate_pseudo_data(RenderState* state, uint16_t ancilData) {
 
         /* get block & data for neighbors in this order: east, north, west, south */
         /* so we can rotate things easily */
-        stairs[0] = stairs[4] = block_class_is_subset(get_data(state, BLOCKS, x + 1, y, z), block_class_stair, block_class_stair_len);
-        stairs[1] = stairs[5] = block_class_is_subset(get_data(state, BLOCKS, x, y, z - 1), block_class_stair, block_class_stair_len);
-        stairs[2] = stairs[6] = block_class_is_subset(get_data(state, BLOCKS, x - 1, y, z), block_class_stair, block_class_stair_len);
-        stairs[3] = stairs[7] = block_class_is_subset(get_data(state, BLOCKS, x, y, z + 1), block_class_stair, block_class_stair_len);
+        stairs[0] = stairs[4] = block_class_has(get_data(state, BLOCKS, x + 1, y, z), BLOCK_CLASS_STAIR);
+        stairs[1] = stairs[5] = block_class_has(get_data(state, BLOCKS, x, y, z - 1), BLOCK_CLASS_STAIR);
+        stairs[2] = stairs[6] = block_class_has(get_data(state, BLOCKS, x - 1, y, z), BLOCK_CLASS_STAIR);
+        stairs[3] = stairs[7] = block_class_has(get_data(state, BLOCKS, x, y, z + 1), BLOCK_CLASS_STAIR);
         neigh[0] = neigh[4] = FIX_ROT(get_data(state, DATA, x + 1, y, z));
         neigh[1] = neigh[5] = FIX_ROT(get_data(state, DATA, x, y, z - 1));
         neigh[2] = neigh[6] = FIX_ROT(get_data(state, DATA, x - 1, y, z));
@@ -614,7 +636,7 @@ chunk_render(PyObject* self, PyObject* args) {
                      * grass, water, glass, chest, restone wire,
                      * ice, portal, iron bars,
                      * trapped chests, stairs */
-                    if (block_class_is_subset(state.block, block_class_ancil, block_class_ancil_len)) {
+                    if (block_class_has(state.block, BLOCK_CLASS_ANCIL)) {
                         ancilData = generate_pseudo_data(&state, ancilData);
                         state.block_pdata = ancilData;
                     } else {

@@ -20,6 +20,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "mc_id.h"
 
@@ -44,5 +45,23 @@ extern const size_t block_class_alt_height_len;
 
 extern const mc_block_t block_class_nether_roof[];
 extern const size_t block_class_nether_roof_len;
+
+/* membership flags for the larger block classes above, indexed by block id,
+   so checks in the per-block render loop are one lookup instead of a scan */
+enum {
+    BLOCK_CLASS_STAIR = 1 << 0,
+    BLOCK_CLASS_DOOR = 1 << 1,
+    BLOCK_CLASS_ANCIL = 1 << 2,
+    BLOCK_CLASS_ALT_HEIGHT = 1 << 3,
+};
+
+extern uint8_t block_class_flags[];
+
+/* fills block_class_flags; called once when the module is initialized */
+void block_class_init(void);
+
+static inline bool block_class_has(mc_block_t block, uint8_t flag) {
+    return (block_class_flags[block] & flag) != 0;
+}
 
 #endif

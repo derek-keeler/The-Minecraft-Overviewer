@@ -141,7 +141,7 @@ estimate_blocklevel(RenderPrimitiveLighting* self, RenderState* state,
     blocklevel = get_data(state, BLOCKLIGHT, x, y, z);
 
     /* no longer a guess */
-    if (!block_class_is_subset(block, block_class_alt_height, block_class_alt_height_len) && authoratative) {
+    if (!block_class_has(block, BLOCK_CLASS_ALT_HEIGHT) && authoratative) {
         *authoratative = 1;
     }
 
@@ -165,7 +165,7 @@ get_lighting_color(RenderPrimitiveLighting* self, RenderState* state,
     /* special half-step handling, stairs handling */
     /* Anvil also needs to be here, blockid 145 */
     /* Full height snow layers have skylevel=0 and blocklightlevel=0, fix them too */
-    if (block_class_is_subset(block, block_class_alt_height, block_class_alt_height_len) || block == block_anvil ||
+    if (block_class_has(block, BLOCK_CLASS_ALT_HEIGHT) || block == block_anvil ||
         (block == block_snow_layer && blockdata == 8)) {
         uint32_t upper_block;
 
@@ -175,7 +175,7 @@ get_lighting_color(RenderPrimitiveLighting* self, RenderState* state,
         do {
             upper_counter++;
             upper_block = get_data(state, BLOCKS, x, y + upper_counter, z);
-        } while (block_class_is_subset(upper_block, block_class_alt_height, block_class_alt_height_len));
+        } while (block_class_has(upper_block, BLOCK_CLASS_ALT_HEIGHT));
         if (is_transparent(upper_block)) {
             skylevel = get_data(state, SKYLIGHT, x, y + upper_counter, z);
         } else {

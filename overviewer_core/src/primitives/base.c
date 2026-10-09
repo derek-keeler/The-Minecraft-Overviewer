@@ -70,9 +70,9 @@ base_occluded(void* data, RenderState* state, int32_t x, int32_t y, int32_t z) {
         if (!is_transparent(block1) &&
             !is_transparent(block2) &&
             !is_transparent(block3) &&
-            !block_class_is_subset(block1, block_class_alt_height, block_class_alt_height_len) &&
-            !block_class_is_subset(block2, block_class_alt_height, block_class_alt_height_len) &&
-            !block_class_is_subset(block3, block_class_alt_height, block_class_alt_height_len)) {
+            !block_class_has(block1, BLOCK_CLASS_ALT_HEIGHT) &&
+            !block_class_has(block2, BLOCK_CLASS_ALT_HEIGHT) &&
+            !block_class_has(block3, BLOCK_CLASS_ALT_HEIGHT)) {
             return true;
         }
     }
