@@ -20,6 +20,7 @@ import os.path
 import zipfile
 from io import BytesIO
 import math
+import pickle
 from random import randint
 import numpy
 from PIL import Image, ImageEnhance, ImageOps, ImageDraw
@@ -91,15 +92,22 @@ class Textures(object):
 
         # once we find a jarfile that contains a texture, we cache the ZipFile object here
         self.jars = OrderedDict()
-    
+
+        # file written by save_generated(); unpickled copies load from it
+        # instead of running generate() again
+        self.generated_path = None
+
     ##
     ## pickle support
     ##
-    
+
+    # the huge image lists and other images built by generate()
+    _generated_attrs = ['blockmap', 'biome_grass_texture', 'watertexture', 'lavatexture', 'firetexture', 'portaltexture', 'lightcolor', 'grasscolor', 'foliagecolor', 'watercolor']
+
     def __getstate__(self):
         # we must get rid of the huge image lists, and other images
         attributes = self.__dict__.copy()
-        for attr in ['blockmap', 'biome_grass_texture', 'watertexture', 'lavatexture', 'firetexture', 'portaltexture', 'lightcolor', 'grasscolor', 'foliagecolor', 'watercolor', 'texture_cache']:
+        for attr in self._generated_attrs + ['texture_cache']:
             try:
                 del attributes[attr]
             except KeyError:
@@ -112,8 +120,33 @@ class Textures(object):
             setattr(self, attr, val)
         self.texture_cache = {}
         if self.generated:
+            path = getattr(self, 'generated_path', None)
+            if path:
+                try:
+                    self.load_generated(path)
+                    return
+                except (OSError, EOFError, pickle.UnpicklingError) as e:
+                    # e.g. a remote worker without access to the file
+                    logging.debug("Could not load generated textures from %r (%s); regenerating.", path, e)
             self.generate()
-    
+
+    def save_generated(self, path):
+        """Writes the output of generate() to path, so that unpickled
+        copies of this object (one per worker process) can load it
+        instead of regenerating every texture."""
+        data = dict((attr, getattr(self, attr)) for attr in self._generated_attrs if hasattr(self, attr))
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "wb") as f:
+            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp_path, path)
+        self.generated_path = path
+
+    def load_generated(self, path):
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        for attr, val in data.items():
+            setattr(self, attr, val)
+
     ##
     ## The big one: generate()
     ##

@@ -634,13 +634,34 @@ def main():
     assetMrg.initialize(tilesets)
 
     # multiprocessing dispatcher
+    texture_files = []
     if config['processes'] == 1:
         dispatch = dispatcher.Dispatcher()
     else:
+        # Hand the generated textures to the worker processes through a
+        # file, so each one loads them instead of running generate() again.
+        try:
+            cache_dir = util.get_cache_dir()
+            for i, tex in enumerate(texcache.values()):
+                if tex.generated:
+                    path = os.path.join(cache_dir, "textures-%d-%d.pickle" % (os.getpid(), i))
+                    tex.save_generated(path)
+                    texture_files.append(path)
+        except OSError as e:
+            # workers fall back to generating their own textures
+            logging.warning("Could not write generated textures to the cache directory (%s); "
+                            "each worker will generate its own.", e)
         dispatch = dispatcher.MultiprocessingDispatcher(
             local_procs=config['processes'])
-    dispatch.render_all(tilesets, config['observer'])
-    dispatch.close()
+    try:
+        dispatch.render_all(tilesets, config['observer'])
+        dispatch.close()
+    finally:
+        for path in texture_files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     assetMrg.finalize(tilesets)
 
