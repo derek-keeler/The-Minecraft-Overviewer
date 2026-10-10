@@ -32,6 +32,9 @@ static PyMethodDef COverviewerMethods[] = {
     {"_tint_with_mask", tint_with_mask_wrap, METH_VARARGS,
      "multiply an image by a colour within a mask (for tests)"},
 
+    {"_draw_triangle", draw_triangle_wrap, METH_VARARGS,
+     "multiply an image by a shaded triangle (for tests)"},
+
     {"render_loop", chunk_render, METH_VARARGS,
      "Renders stuffs"},
 

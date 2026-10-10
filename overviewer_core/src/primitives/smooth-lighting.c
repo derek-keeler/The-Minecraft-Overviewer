@@ -108,6 +108,42 @@ enum {
     FACE_RIGHT = 2,
 };
 
+/* The lighting colour at an offset from (cx, cy, cz). A face's four corners
+   share its centre and edge neighbours, so colours already worked out for
+   this face are kept in samples and reused. */
+struct LightingSample {
+    int32_t dx, dy, dz;
+    uint8_t r, g, b;
+};
+
+static void
+face_lighting_color(RenderPrimitiveLighting* lighting, RenderState* state,
+                    int32_t cx, int32_t cy, int32_t cz, int32_t dx, int32_t dy, int32_t dz,
+                    struct LightingSample* samples, int32_t* num_samples,
+                    uint8_t* r, uint8_t* g, uint8_t* b) {
+    int32_t i;
+    struct LightingSample* sample;
+
+    for (i = 0; i < *num_samples; i++) {
+        sample = &samples[i];
+        if (sample->dx == dx && sample->dy == dy && sample->dz == dz) {
+            *r = sample->r;
+            *g = sample->g;
+            *b = sample->b;
+            return;
+        }
+    }
+
+    get_lighting_color(lighting, state, cx + dx, cy + dy, cz + dz, r, g, b);
+    sample = &samples[(*num_samples)++];
+    sample->dx = dx;
+    sample->dy = dy;
+    sample->dz = dz;
+    sample->r = *r;
+    sample->g = *g;
+    sample->b = *b;
+}
+
 static void
 do_shading_with_rule(RenderPrimitiveSmoothLighting* self, RenderState* state, struct SmoothLightingFace face) {
     int32_t i;
@@ -121,6 +157,9 @@ do_shading_with_rule(RenderPrimitiveSmoothLighting* self, RenderState* state, st
     int32_t cx = state->x + face.dx;
     int32_t cy = state->y + face.dy;
     int32_t cz = state->z + face.dz;
+    /* the centre and three points per corner, at most */
+    struct LightingSample samples[13];
+    int32_t num_samples = 0;
 
     /* first, check for occlusion if the block is in the local chunk */
     if (lighting_is_face_occluded(state, 0, cx, cy, cz))
@@ -131,30 +170,30 @@ do_shading_with_rule(RenderPrimitiveSmoothLighting* self, RenderState* state, st
         uint8_t r, g, b;
         uint32_t rgather = 0, ggather = 0, bgather = 0;
 
-        get_lighting_color(lighting, state, cx, cy, cz,
-                           &r, &g, &b);
+        face_lighting_color(lighting, state, cx, cy, cz, 0, 0, 0,
+                            samples, &num_samples, &r, &g, &b);
         rgather += r;
         ggather += g;
         bgather += b;
 
-        get_lighting_color(lighting, state,
-                           cx + pts[i].dx1, cy + pts[i].dy1, cz + pts[i].dz1,
-                           &r, &g, &b);
+        face_lighting_color(lighting, state, cx, cy, cz,
+                            pts[i].dx1, pts[i].dy1, pts[i].dz1,
+                            samples, &num_samples, &r, &g, &b);
         rgather += r;
         ggather += g;
         bgather += b;
 
-        get_lighting_color(lighting, state,
-                           cx + pts[i].dx2, cy + pts[i].dy2, cz + pts[i].dz2,
-                           &r, &g, &b);
+        face_lighting_color(lighting, state, cx, cy, cz,
+                            pts[i].dx2, pts[i].dy2, pts[i].dz2,
+                            samples, &num_samples, &r, &g, &b);
         rgather += r;
         ggather += g;
         bgather += b;
 
         /* FIXME special far corner handling */
-        get_lighting_color(lighting, state,
-                           cx + pts[i].dx1 + pts[i].dx2, cy + pts[i].dy1 + pts[i].dy2, cz + pts[i].dz1 + pts[i].dz2,
-                           &r, &g, &b);
+        face_lighting_color(lighting, state, cx, cy, cz,
+                            pts[i].dx1 + pts[i].dx2, pts[i].dy1 + pts[i].dy2, pts[i].dz1 + pts[i].dz2,
+                            samples, &num_samples, &r, &g, &b);
         rgather += r;
         ggather += g;
         bgather += b;
