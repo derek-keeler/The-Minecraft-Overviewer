@@ -128,3 +128,4 @@ Expect a few percent of noise between runs.
 | Change | Single render | Seven renders | Seven renders vs. baseline | Seven-render tile size | Tiles identical | Full world render |
 |---|---:|---:|---:|---:|---|---:|
 | Baseline | *pending* | *pending* | — | *pending* | — | *pending* |
+| Faster chunk parsing | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
