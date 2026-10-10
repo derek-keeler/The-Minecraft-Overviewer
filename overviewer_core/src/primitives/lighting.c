@@ -21,13 +21,31 @@
 #include "../mc_id.h"
 #include "../overviewer.h"
 
+/* the shade 255 * 0.8^(15 - level) of a light level, from a table for the
+   usual levels 0-15 */
+static uint8_t
+light_level_shade(int32_t level) {
+    static uint8_t table[16];
+    static bool table_ready = false;
+
+    if (level < 0 || level > 15)
+        return 255 * powf(0.8f, 15.0 - level);
+    if (!table_ready) {
+        int32_t i;
+        for (i = 0; i < 16; i++)
+            table[i] = 255 * powf(0.8f, 15.0 - i);
+        table_ready = true;
+    }
+    return table[level];
+}
+
 /* figures out the color from a given skylight and blocklight,
    used in lighting calculations */
 static void
 calculate_light_color(void* data,
                       uint8_t skylight, uint8_t blocklight,
                       uint8_t* r, uint8_t* g, uint8_t* b) {
-    uint8_t v = 255 * powf(0.8f, 15.0 - OV_MAX(blocklight, skylight));
+    uint8_t v = light_level_shade(OV_MAX(blocklight, skylight));
     *r = v;
     *g = v;
     *b = v;
@@ -62,7 +80,7 @@ static void
 calculate_light_color_night(void* data,
                             uint8_t skylight, uint8_t blocklight,
                             uint8_t* r, uint8_t* g, uint8_t* b) {
-    uint8_t v = 255 * powf(0.8f, 15.0 - OV_MAX(blocklight, skylight - 11));
+    uint8_t v = light_level_shade(OV_MAX(blocklight, skylight - 11));
     *r = v;
     *g = v;
     *b = v;

@@ -1,5 +1,8 @@
+import platform
 import random
 import unittest
+
+import numpy
 
 from PIL import Image
 
@@ -54,6 +57,42 @@ def reference_tint_with_mask(dest, colour, mask, pos):
             else:
                 out[dx + x, dy + y] = tuple(muldiv255(p, (255 - m) + muldiv255(c, m))
                                             for p, c in zip(pixel, colour))
+
+
+def reference_draw_triangle(dest, inclusive, p0, p1, p2, tu, touchups):
+    """The C triangle, one pixel at a time, with its float32 arithmetic."""
+    f = numpy.float32
+    out = dest.load()
+    (x0, y0, r0, g0, b0), (x1, y1, r1, g1, b1), (x2, y2, r2, g2, b2) = p0, p1, p2
+    a12, b12, c12 = y1 - y2, x2 - x1, x1 * y2 - x2 * y1
+    a20, b20, c20 = y2 - y0, x0 - x2, x2 * y0 - x0 * y2
+    a01, b01, c01 = y0 - y1, x1 - x0, x0 * y1 - x1 * y0
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        alpha_norm = f(1) / f(a12 * x0 + b12 * y0 + c12)
+        beta_norm = f(1) / f(a20 * x1 + b20 * y1 + c20)
+        gamma_norm = f(1) / f(a01 * x2 + b01 * y2 + c01)
+
+    def shade(x, y, test):
+        with numpy.errstate(invalid="ignore", over="ignore"):
+            alpha = alpha_norm * f(a12 * x + b12 * y + c12)
+            beta = beta_norm * f(a20 * x + b20 * y + c20)
+            gamma = gamma_norm * f(a01 * x + b01 * y + c01)
+            if test and not (alpha >= 0 and beta >= 0 and gamma >= 0 and
+                             (inclusive or alpha * beta * gamma > 0)):
+                return
+            pixel = out[x, y]
+            colour = [int(alpha * f(c0) + beta * f(c1) + gamma * f(c2))
+                      for c0, c1, c2 in ((r0, r1, r2), (g0, g1, g2), (b0, b1, b2))]
+        out[x, y] = tuple(muldiv255(p, c) & 255 for p, c in zip(pixel[:3], colour)) + (pixel[3],)
+
+    width, height = dest.size
+    for y in range(max(min(y0, y1, y2), 0), min(max(y0, y1, y2) + 1, height)):
+        for x in range(max(min(x0, x1, x2), 0), min(max(x0, x1, x2) + 1, width)):
+            shade(x, y, True)
+    for i in range(0, len(touchups), 2):
+        x, y = touchups[i] + tu[0], touchups[i + 1] + tu[1]
+        if 0 <= x < width and 0 <= y < height:
+            shade(x, y, False)
 
 
 class AlphaOverTests(unittest.TestCase):
@@ -150,3 +189,39 @@ class TintWithMaskTests(unittest.TestCase):
             expected = canvas.crop((32, 32, 64, 64))
             c_overviewer._tint_with_mask(dest, (255, 255, 255, 0), mask, pos)
             self.assertEqual(dest.tobytes(), expected.tobytes(), "at %r" % (pos,))
+
+
+class DrawTriangleTests(unittest.TestCase):
+    random_image = AlphaOverTests.random_image
+
+    def test_matches_reference_triangle(self):
+        # The float colour sums may be fused into multiply-adds on other
+        # architectures, so allow those to differ by one.
+        tolerance = 0 if platform.machine().lower() in ("x86_64", "amd64") else 1
+        rng = random.Random(29)
+        # the smooth lighting faces, and random ones (some degenerate or clipped)
+        faces = [((0, 6), (12, 0), (24, 6), (12, 12)), ((0, 18), (0, 6), (12, 12), (12, 24)),
+                 ((24, 6), (12, 12), (12, 24), (24, 18))]
+        for case in range(300):
+            dest = self.random_image(rng, "RGBA", (40, 40))
+            if case % 2:
+                corners = rng.choice(faces)
+                ox, oy = rng.randrange(-8, 24), rng.randrange(-8, 24)
+                points = [(x + ox, y + oy) for x, y in rng.choice([corners[:3], (corners[0], corners[2], corners[3])])]
+            else:
+                points = [(rng.randrange(-10, 50), rng.randrange(-10, 50)) for _ in range(3)]
+                if case % 10 == 0:
+                    points[2] = points[1]
+            vertices = [p + tuple(rng.randrange(256) for _ in range(3)) for p in points]
+            inclusive = rng.randrange(2)
+            # touch-ups only come with the (never degenerate) lighting faces
+            touchups = [1, 5, 3, 4, 5, 3, 7, 2, 9, 1, 11, 0] if case % 2 and rng.random() < 0.5 else []
+            tu = (rng.randrange(0, 20), rng.randrange(0, 20))
+
+            expected = dest.copy()
+            reference_draw_triangle(expected, inclusive, *vertices, tu, touchups)
+            c_overviewer._draw_triangle(dest, inclusive, *vertices, tu, touchups)
+            got = numpy.asarray(dest, dtype=int)
+            want = numpy.asarray(expected, dtype=int)
+            self.assertLessEqual(int(numpy.abs(got - want).max()), tolerance,
+                                 "case %d: %r inclusive %d" % (case, vertices, inclusive))

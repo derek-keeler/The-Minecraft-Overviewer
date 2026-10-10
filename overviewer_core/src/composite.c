@@ -22,6 +22,8 @@
  * PIL paste if this extension is not found.
  */
 
+#include <math.h>
+
 #include "overviewer.h"
 
 typedef struct {
@@ -502,6 +504,36 @@ tint_with_mask_wrap(PyObject* self, PyObject* args) {
     return ret;
 }
 
+/* draw_triangle(dest, inclusive, (x0, y0, r0, g0, b0), (x1, ...), (x2, ...),
+ *               (tux, tuy), [touchup x, touchup y, ...]), for tests */
+PyObject*
+draw_triangle_wrap(PyObject* self, PyObject* args) {
+    PyObject *dest, *touchup_list, *ret;
+    int32_t inclusive, x0, y0, r0, g0, b0, x1, y1, r1, g1, b1, x2, y2, r2, g2, b2, tux, tuy;
+    int32_t touchups[64];
+    Py_ssize_t i, num_touchups;
+
+    if (!PyArg_ParseTuple(args, "Oi(iiiii)(iiiii)(iiiii)(ii)O!", &dest, &inclusive,
+                          &x0, &y0, &r0, &g0, &b0, &x1, &y1, &r1, &g1, &b1,
+                          &x2, &y2, &r2, &g2, &b2, &tux, &tuy, &PyList_Type, &touchup_list))
+        return NULL;
+    num_touchups = PyList_GET_SIZE(touchup_list);
+    if (num_touchups > 64 || num_touchups % 2) {
+        PyErr_SetString(PyExc_ValueError, "touchups must be up to 32 x, y pairs");
+        return NULL;
+    }
+    for (i = 0; i < num_touchups; i++)
+        touchups[i] = PyLong_AsLong(PyList_GET_ITEM(touchup_list, i));
+
+    ret = draw_triangle(dest, inclusive, x0, y0, r0, g0, b0, x1, y1, r1, g1, b1,
+                        x2, y2, r2, g2, b2, tux, tuy, touchups, num_touchups / 2);
+    if (ret == dest) {
+        /* Python needs us to own our return value */
+        Py_INCREF(dest);
+    }
+    return ret;
+}
+
 /* draws a triangle on the destination image, multiplicatively!
  * used for smooth lighting
  * (excuse the ridiculous number of parameters!)
@@ -575,34 +607,81 @@ draw_triangle(PyObject* dest, int32_t inclusive,
     beta_norm = 1.0f / ((a20 * x1) + (b20 * y1) + c20);
     gamma_norm = 1.0f / ((a01 * x2) + (b01 * y2) + c01);
 
-    /* iterate over the destination rect */
-    for (y = ymin; y < ymax; y++) {
-        UINT8* out = (UINT8*)imDest->image[y] + xmin * 4;
+    /* Which pixels are inside depends only on the signs of the edge values
+       (a * x + b * y + c), which are integers: alpha >= 0 when the edge
+       value has the sign of its normalizer, or is 0. Step the edge values
+       along each row in integers, and only work out the colour of pixels
+       inside. A degenerate triangle has an infinite normalizer, so it keeps
+       the floating point test. */
+    if (isfinite(alpha_norm) && isfinite(beta_norm) && isfinite(gamma_norm)) {
+        int32_t s12 = alpha_norm < 0 ? -1 : 1;
+        int32_t s20 = beta_norm < 0 ? -1 : 1;
+        int32_t s01 = gamma_norm < 0 ? -1 : 1;
+        /* inside needs every signed edge value >= 0, or > 0 if not inclusive */
+        int32_t threshold = inclusive ? 0 : 1;
 
-        for (x = xmin; x < xmax; x++) {
-            float alpha, beta, gamma;
-            alpha = alpha_norm * ((a12 * x) + (b12 * y) + c12);
-            beta = beta_norm * ((a20 * x) + (b20 * y) + c20);
-            gamma = gamma_norm * ((a01 * x) + (b01 * y) + c01);
+        for (y = ymin; y < ymax; y++) {
+            UINT8* out = (UINT8*)imDest->image[y] + xmin * 4;
+            int32_t e12 = (a12 * xmin) + (b12 * y) + c12;
+            int32_t e20 = (a20 * xmin) + (b20 * y) + c20;
+            int32_t e01 = (a01 * xmin) + (b01 * y) + c01;
+            bool entered = false;
 
-            if (alpha >= 0 && beta >= 0 && gamma >= 0 &&
-                (inclusive || (alpha * beta * gamma > 0))) {
-                uint32_t r = alpha * r0 + beta * r1 + gamma * r2;
-                uint32_t g = alpha * g0 + beta * g1 + gamma * g2;
-                uint32_t b = alpha * b0 + beta * b1 + gamma * b2;
+            for (x = xmin; x < xmax; x++, out += 4, e12 += a12, e20 += a20, e01 += a01) {
+                float alpha, beta, gamma;
+                uint32_t r, g, b;
 
-                *out = OV_MULDIV255(*out, r, tmp);
-                out++;
-                *out = OV_MULDIV255(*out, g, tmp);
-                out++;
-                *out = OV_MULDIV255(*out, b, tmp);
-                out++;
+                if (e12 * s12 < threshold || e20 * s20 < threshold || e01 * s01 < threshold) {
+                    /* a triangle is convex, so once a row leaves it, it's done */
+                    if (entered)
+                        break;
+                    continue;
+                }
+                entered = true;
 
+                alpha = alpha_norm * e12;
+                beta = beta_norm * e20;
+                gamma = gamma_norm * e01;
+                r = alpha * r0 + beta * r1 + gamma * r2;
+                g = alpha * g0 + beta * g1 + gamma * g2;
+                b = alpha * b0 + beta * b1 + gamma * b2;
+
+                out[0] = OV_MULDIV255(out[0], r, tmp);
+                out[1] = OV_MULDIV255(out[1], g, tmp);
+                out[2] = OV_MULDIV255(out[2], b, tmp);
                 /* keep alpha the same */
-                out++;
-            } else {
-                /* skip */
-                out += 4;
+            }
+        }
+    } else {
+        /* iterate over the destination rect */
+        for (y = ymin; y < ymax; y++) {
+            UINT8* out = (UINT8*)imDest->image[y] + xmin * 4;
+
+            for (x = xmin; x < xmax; x++) {
+                float alpha, beta, gamma;
+                alpha = alpha_norm * ((a12 * x) + (b12 * y) + c12);
+                beta = beta_norm * ((a20 * x) + (b20 * y) + c20);
+                gamma = gamma_norm * ((a01 * x) + (b01 * y) + c01);
+
+                if (alpha >= 0 && beta >= 0 && gamma >= 0 &&
+                    (inclusive || (alpha * beta * gamma > 0))) {
+                    uint32_t r = alpha * r0 + beta * r1 + gamma * r2;
+                    uint32_t g = alpha * g0 + beta * g1 + gamma * g2;
+                    uint32_t b = alpha * b0 + beta * b1 + gamma * b2;
+
+                    *out = OV_MULDIV255(*out, r, tmp);
+                    out++;
+                    *out = OV_MULDIV255(*out, g, tmp);
+                    out++;
+                    *out = OV_MULDIV255(*out, b, tmp);
+                    out++;
+
+                    /* keep alpha the same */
+                    out++;
+                } else {
+                    /* skip */
+                    out += 4;
+                }
             }
         }
     }
