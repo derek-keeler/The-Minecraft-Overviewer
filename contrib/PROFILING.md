@@ -133,3 +133,4 @@ Expect a few percent of noise between runs.
 | Chunk reuse within a render | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Native render loop | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Batching across renders | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
+| Startup | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
