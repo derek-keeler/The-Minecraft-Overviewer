@@ -38,6 +38,9 @@ static PyMethodDef COverviewerMethods[] = {
     {"render_loop", chunk_render, METH_VARARGS,
      "Renders stuffs"},
 
+    {"render_tile", tile_render, METH_VARARGS,
+     "Renders a list of chunk sections onto a tile image"},
+
     {"extension_version", get_extension_version, METH_VARARGS,
      "Returns the extension version"},
 

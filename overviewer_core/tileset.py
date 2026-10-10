@@ -1203,32 +1203,32 @@ class TileSet(object):
         # col colstart will get drawn on the image starting at x coordinates -(384/2)
         # row rowstart will get drawn on the image starting at y coordinates -(192/2)
         max_chunk_mtime = 0
+        sections = []
         for col, row, chunkx, chunky, chunkz, chunk_mtime in chunks:
             xpos = -192 + (col - colstart) * 192
             ypos = -96 + (row - rowstart) * 96 + (24 - 1 - chunky) * 192
+            sections.append((chunkx, chunky, chunkz, xpos, ypos))
 
             if chunk_mtime > max_chunk_mtime:
                 max_chunk_mtime = chunk_mtime
 
-            # draw the chunk!
-            try:
-                c_overviewer.render_loop(
-                    self.world, self.regionset, chunkx, chunky, chunkz, tileimg, xpos, ypos,
-                    self.options['rendermode'], self.textures)
-            except nbt.CorruptionError:
-                # A warning and traceback was already printed by world.py's
-                # get_chunk()
-                logging.debug("Skipping the render of corrupt chunk at %s,%s "
-                              "and moving on.", chunkx, chunkz)
-            except world.ChunkDoesntExist:
-                # Some chunks are present on disk but not fully initialized.
-                # This is okay.
-                pass
-            except Exception as e:
-                logging.error("Could not render chunk %s,%s for some reason. "
-                              "This is likely a render primitive option error.", chunkx, chunkz)
-                logging.error("Full error was:", exc_info=1)
-                sys.exit(1)
+        # draw the chunk sections, in order, skipping chunks that are present
+        # on disk but not fully initialized, and corrupt ones
+        try:
+            corrupt = c_overviewer.render_tile(
+                self.world, self.regionset, sections, tileimg,
+                self.options['rendermode'], self.textures,
+                world.ChunkDoesntExist, nbt.CorruptionError)
+        except Exception:
+            logging.error("Could not render %s for some reason. "
+                          "This is likely a render primitive option error.", tile)
+            logging.error("Full error was:", exc_info=1)
+            sys.exit(1)
+        for chunkx, chunkz in corrupt:
+            # A warning and traceback was already printed by world.py's
+            # get_chunk()
+            logging.debug("Skipping the render of corrupt chunk at %s,%s "
+                          "and moving on.", chunkx, chunkz)
 
         # Save them
         with FileReplacer(imgpath, capabilities=self.fs_caps) as tmppath:
@@ -1511,7 +1511,15 @@ def get_chunks_by_tile(tile, regionset):
         def get_mtime(x, y):
             return True
     else:
-        get_mtime = regionset.get_chunk_mtime
+        # every section of a chunk asks, so look each chunk up once
+        mtimes = {}
+
+        def get_mtime(x, z):
+            try:
+                return mtimes[x, z]
+            except KeyError:
+                mtime = mtimes[x, z] = regionset.get_chunk_mtime(x, z)
+                return mtime
 
     # Each tile has two even columns and an odd column of chunks.
 
