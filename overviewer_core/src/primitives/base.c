@@ -58,21 +58,21 @@ base_finish(void* data, RenderState* state) {
 
 static bool
 base_occluded(void* data, RenderState* state, int32_t x, int32_t y, int32_t z) {
-    if ((x != 0) && (y != 15) && (z != 15) &&
-        !render_mode_hidden(state->rendermode, x - 1, y, z) &&
-        !render_mode_hidden(state->rendermode, x, y, z + 1) &&
-        !render_mode_hidden(state->rendermode, x, y + 1, z)) {
-
+    if ((x != 0) && (y != 15) && (z != 15)) {
         mc_block_t block1 = getArrayShort3D(state->blocks, x - 1, y, z);
         mc_block_t block2 = getArrayShort3D(state->blocks, x, y, z + 1);
         mc_block_t block3 = getArrayShort3D(state->blocks, x, y + 1, z);
 
+        /* the cheap tests first */
         if (!is_transparent(block1) &&
             !is_transparent(block2) &&
             !is_transparent(block3) &&
             !block_class_has(block1, BLOCK_CLASS_ALT_HEIGHT) &&
             !block_class_has(block2, BLOCK_CLASS_ALT_HEIGHT) &&
-            !block_class_has(block3, BLOCK_CLASS_ALT_HEIGHT)) {
+            !block_class_has(block3, BLOCK_CLASS_ALT_HEIGHT) &&
+            !render_mode_hidden(state->rendermode, x - 1, y, z) &&
+            !render_mode_hidden(state->rendermode, x, y, z + 1) &&
+            !render_mode_hidden(state->rendermode, x, y + 1, z)) {
             return true;
         }
     }
