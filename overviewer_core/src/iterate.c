@@ -139,20 +139,14 @@ static inline void load_chunk_section(ChunkData* dest, int32_t i, PyObject* sect
     Py_INCREF(dest->sections[i].blocklight);
 }
 
-/* loads the given chunk into the chunks[] array in the state
- * returns true on error
- *
- * if required is true, failure to load the chunk will raise a python
- * exception and return true.
+/* fetches chunk column (x, z) from the regionset into dest's sections, which
+ * then hold references to the section arrays. Returns true on error, with a
+ * Python exception set (or, oddly, not, if the chunk has no Sections tag).
  */
-bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
-    ChunkData* dest = &(state->chunks[1 + x][1 + z]);
+static bool fetch_chunk(PyObject* regionset, int32_t x, int32_t z, ChunkData* dest) {
     int32_t i;
     PyObject* chunk = NULL;
     PyObject* sections = NULL;
-
-    if (dest->loaded)
-        return false;
 
     /* set reasonable defaults */
     for (i = 0; i < SECTIONS_PER_CHUNK; i++) {
@@ -162,18 +156,11 @@ bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
         dest->sections[i].blocklight = NULL;
         dest->sections[i].biomes = NULL;
     }
-    dest->loaded = 1;
 
-    x += state->chunkx;
-    z += state->chunkz;
-
-    chunk = PyObject_CallMethod(state->regionset, "get_chunk", "ii", x, z);
+    chunk = PyObject_CallMethod(regionset, "get_chunk", "ii", x, z);
     if (chunk == NULL) {
         // An exception is already set. RegionSet.get_chunk sets
         // ChunkDoesntExist
-        if (!required) {
-            PyErr_Clear();
-        }
         return true;
     }
 
@@ -184,9 +171,6 @@ bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
     if (sections == NULL) {
         // exception set, again
         Py_DECREF(chunk);
-        if (!required) {
-            PyErr_Clear();
-        }
         return true;
     }
 
@@ -208,13 +192,164 @@ bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
     return false;
 }
 
+/* The chunk columns fetched while rendering one tile. A tile draws a few
+ * hundred chunk sections from about a hundred columns, and every section looks
+ * at its own column and its neighbours'. Each column is fetched from Python
+ * (and its sections unpacked) once per tile instead of once per section. The
+ * entries own the references to the section arrays; columns that could not be
+ * fetched are remembered as missing.
+ */
+typedef struct {
+    int32_t x, z;
+    bool used, missing;
+    ChunkData data;
+} ChunkCacheEntry;
+
+struct ChunkCache {
+    ChunkCacheEntry* entries;
+    /* size is a power of two */
+    uint32_t size, count;
+};
+
+static uint32_t chunk_cache_slot(struct ChunkCache* cache, int32_t x, int32_t z) {
+    uint32_t slot = ((uint32_t)x * 73856093u ^ (uint32_t)z * 19349663u) & (cache->size - 1);
+    while (cache->entries[slot].used && (cache->entries[slot].x != x || cache->entries[slot].z != z))
+        slot = (slot + 1) & (cache->size - 1);
+    return slot;
+}
+
+static bool chunk_cache_init(struct ChunkCache* cache) {
+    cache->size = 256;
+    cache->count = 0;
+    cache->entries = calloc(cache->size, sizeof(ChunkCacheEntry));
+    return cache->entries != NULL;
+}
+
+static void chunk_cache_free(struct ChunkCache* cache) {
+    uint32_t i, k;
+    for (i = 0; i < cache->size; i++) {
+        ChunkCacheEntry* entry = &cache->entries[i];
+        if (!entry->used || entry->missing)
+            continue;
+        for (k = 0; k < SECTIONS_PER_CHUNK; k++) {
+            Py_XDECREF(entry->data.sections[k].blocks);
+            Py_XDECREF(entry->data.sections[k].data);
+            Py_XDECREF(entry->data.sections[k].skylight);
+            Py_XDECREF(entry->data.sections[k].blocklight);
+            Py_XDECREF(entry->data.sections[k].biomes);
+        }
+    }
+    free(cache->entries);
+    cache->entries = NULL;
+}
+
+/* the entry for column (x, z), adding an empty one (*created) if there isn't
+   one yet; NULL if out of memory */
+static ChunkCacheEntry* chunk_cache_find(struct ChunkCache* cache, int32_t x, int32_t z, bool* created) {
+    uint32_t slot = chunk_cache_slot(cache, x, z);
+    ChunkCacheEntry* entry = &cache->entries[slot];
+
+    *created = false;
+    if (entry->used)
+        return entry;
+
+    if ((cache->count + 1) * 4 > cache->size * 3) {
+        /* grow, keeping it at most 3/4 full */
+        struct ChunkCache bigger = {calloc(cache->size * 2, sizeof(ChunkCacheEntry)), cache->size * 2, cache->count};
+        uint32_t i;
+        if (!bigger.entries)
+            return NULL;
+        for (i = 0; i < cache->size; i++) {
+            if (cache->entries[i].used)
+                bigger.entries[chunk_cache_slot(&bigger, cache->entries[i].x, cache->entries[i].z)] = cache->entries[i];
+        }
+        free(cache->entries);
+        *cache = bigger;
+        entry = &cache->entries[chunk_cache_slot(cache, x, z)];
+    }
+
+    entry->used = true;
+    entry->missing = false;
+    entry->x = x;
+    entry->z = z;
+    cache->count++;
+    *created = true;
+    return entry;
+}
+
+/* load_chunk() through the tile's chunk cache: dest borrows the cached arrays */
+static bool load_cached_chunk(RenderState* state, ChunkData* dest, int32_t x, int32_t z, uint8_t required) {
+    bool created;
+    ChunkCacheEntry* entry = chunk_cache_find(state->chunk_cache, x, z, &created);
+
+    if (entry == NULL) {
+        int32_t i;
+        for (i = 0; i < SECTIONS_PER_CHUNK; i++) {
+            dest->sections[i].blocks = NULL;
+            dest->sections[i].data = NULL;
+            dest->sections[i].skylight = NULL;
+            dest->sections[i].blocklight = NULL;
+            dest->sections[i].biomes = NULL;
+        }
+        dest->loaded = 1;
+        dest->borrowed = 0;
+        PyErr_NoMemory();
+        if (!required)
+            PyErr_Clear();
+        return true;
+    }
+
+    if (created || (entry->missing && required)) {
+        /* fetch it, or for a required column that is missing, fetch it
+           again to raise its error as an uncached load would */
+        entry->missing = fetch_chunk(state->regionset, x, z, &entry->data);
+        if (entry->missing && !required)
+            PyErr_Clear();
+    }
+
+    *dest = entry->data;
+    dest->loaded = 1;
+    dest->borrowed = 1;
+    return entry->missing;
+}
+
+/* loads the given chunk into the chunks[] array in the state
+ * returns true on error
+ *
+ * if required is true, failure to load the chunk will raise a python
+ * exception and return true.
+ */
+bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required) {
+    ChunkData* dest = &(state->chunks[1 + x][1 + z]);
+
+    if (dest->loaded)
+        return false;
+
+    x += state->chunkx;
+    z += state->chunkz;
+
+    if (state->chunk_cache)
+        return load_cached_chunk(state, dest, x, z, required);
+
+    dest->loaded = 1;
+    dest->borrowed = 0;
+    if (fetch_chunk(state->regionset, x, z, dest)) {
+        if (!required) {
+            PyErr_Clear();
+        }
+        return true;
+    }
+
+    return false;
+}
+
 /* helper to unload all loaded chunks */
 static void
 unload_all_chunks(RenderState* state) {
     uint32_t i, j, k;
     for (i = 0; i < 3; i++) {
         for (j = 0; j < 3; j++) {
-            if (state->chunks[i][j].loaded) {
+            if (state->chunks[i][j].loaded && !state->chunks[i][j].borrowed) {
                 for (k = 0; k < SECTIONS_PER_CHUNK; k++) {
                     Py_XDECREF(state->chunks[i][j].sections[k].blocks);
                     Py_XDECREF(state->chunks[i][j].sections[k].data);
@@ -222,8 +357,8 @@ unload_all_chunks(RenderState* state) {
                     Py_XDECREF(state->chunks[i][j].sections[k].blocklight);
                     Py_XDECREF(state->chunks[i][j].sections[k].biomes);
                 }
-                state->chunks[i][j].loaded = 0;
             }
+            state->chunks[i][j].loaded = 0;
         }
     }
 }
@@ -503,161 +638,145 @@ generate_pseudo_data(RenderState* state, uint16_t ancilData) {
     return 0;
 }
 
-/* TODO triple check this to make sure reference counting is correct */
-PyObject*
-chunk_render(PyObject* self, PyObject* args) {
-    RenderState state;
-    PyObject* modeobj;
-    PyObject* blockmap;
-
-    int32_t xoff, yoff;
-
-    PyObject *imgsize, *imgsize0_py, *imgsize1_py;
-    int32_t imgsize0, imgsize1;
-
-    PyArrayObject* blocks_py;
-    PyArrayObject* left_blocks_py;
-    PyArrayObject* right_blocks_py;
-    PyArrayObject* up_left_blocks_py;
-    PyArrayObject* up_right_blocks_py;
-
-    RenderMode* rendermode;
-
-    int32_t i, j;
-
-    PyObject* t = NULL;
-
-    if (!PyArg_ParseTuple(args, "OOiiiOiiOO", &state.world, &state.regionset, &state.chunkx, &state.chunky, &state.chunkz, &state.img, &xoff, &yoff, &modeobj, &state.textures))
-        return NULL;
-
-    /* set up the render mode */
-    state.rendermode = rendermode = render_mode_create(modeobj, &state);
-    if (rendermode == NULL) {
-        return NULL; // note that render_mode_create will
-                     // set PyErr.  No need to set it here
+/* reads an image's size; returns -1 with an exception set on error */
+static int get_image_size(PyObject* img, int32_t* width, int32_t* height) {
+    PyObject* size = PyObject_GetAttrString(img, "size");
+    if (size == NULL)
+        return -1;
+    if (!PyArg_ParseTuple(size, "ii", width, height)) {
+        Py_DECREF(size);
+        return -1;
     }
+    Py_DECREF(size);
+    return 0;
+}
 
-    /* get the blockmap from the textures object */
-    blockmap = PyObject_GetAttrString(state.textures, "blockmap");
-    if (blockmap == NULL) {
-        render_mode_destroy(rendermode);
-        return NULL;
-    }
+/* the textures' blockmap (a new reference), or NULL with an exception set */
+static PyObject* get_blockmap(PyObject* textures) {
+    PyObject* blockmap = PyObject_GetAttrString(textures, "blockmap");
     if (blockmap == Py_None) {
-        render_mode_destroy(rendermode);
+        Py_DECREF(blockmap);
         PyErr_SetString(PyExc_RuntimeError, "you must call Textures.generate()");
         return NULL;
     }
+    return blockmap;
+}
 
-    /* get the image size */
-    imgsize = PyObject_GetAttrString(state.img, "size");
-
-    imgsize0_py = PySequence_GetItem(imgsize, 0);
-    imgsize1_py = PySequence_GetItem(imgsize, 1);
-    Py_DECREF(imgsize);
-
-    imgsize0 = PyLong_AsLong(imgsize0_py);
-    imgsize1 = PyLong_AsLong(imgsize1_py);
-    Py_DECREF(imgsize0_py);
-    Py_DECREF(imgsize1_py);
+/* Renders the chunk section at state->chunkx, chunky, chunkz onto state->img,
+ * offset by (xoff, yoff). Returns -1 with a Python exception set on error.
+ * A missing chunk raises ChunkDoesntExist, a missing section draws nothing.
+ */
+static int
+render_section(RenderState* state, PyObject* modeobj, PyObject* blockmap,
+               int32_t imgsize0, int32_t imgsize1, int32_t xoff, int32_t yoff) {
+    PyArrayObject* blocks_py;
+    RenderMode* rendermode;
+    int32_t i, j;
+    PyObject* t = NULL;
 
     /* set all block data to unloaded */
     for (i = 0; i < 3; i++) {
         for (j = 0; j < 3; j++) {
-            state.chunks[i][j].loaded = 0;
+            state->chunks[i][j].loaded = 0;
         }
     }
 
-    /* get the block data for the center column, erroring out if needed */
-    if (load_chunk(&state, 0, 0, 1)) {
-        render_mode_destroy(rendermode);
-        Py_DECREF(blockmap);
-        return NULL;
-    }
-    if (state.chunks[1][1].sections[state.chunky].blocks == NULL) {
-        /* this section doesn't exist, let's skeddadle */
-        render_mode_destroy(rendermode);
-        Py_DECREF(blockmap);
-        unload_all_chunks(&state);
-        Py_RETURN_NONE;
+    /* set up the render mode */
+    state->rendermode = rendermode = render_mode_create(modeobj, state);
+    if (rendermode == NULL) {
+        return -1; // note that render_mode_create will
+                   // set PyErr.  No need to set it here
     }
 
-    /* set blocks_py, state.blocks, and state.blockdatas as convenience */
-    blocks_py = state.blocks = state.chunks[1][1].sections[state.chunky].blocks;
-    state.blockdatas = state.chunks[1][1].sections[state.chunky].data;
+    /* get the block data for the center column, erroring out if needed */
+    if (load_chunk(state, 0, 0, 1)) {
+        render_mode_destroy(rendermode);
+        unload_all_chunks(state);
+        return -1;
+    }
+    if (state->chunks[1][1].sections[state->chunky].blocks == NULL) {
+        /* this section doesn't exist, let's skeddadle */
+        render_mode_destroy(rendermode);
+        unload_all_chunks(state);
+        return 0;
+    }
+
+    /* set blocks_py, state->blocks, and state->blockdatas as convenience */
+    blocks_py = state->blocks = state->chunks[1][1].sections[state->chunky].blocks;
+    state->blockdatas = state->chunks[1][1].sections[state->chunky].data;
 
     /* set up the random number generator again for each chunk
        so tallgrass is in the same place, no matter what mode is used */
     srand(1);
 
-    for (state.x = 15; state.x > -1; state.x--) {
-        for (state.z = 0; state.z < 16; state.z++) {
+    for (state->x = 15; state->x > -1; state->x--) {
+        for (state->z = 0; state->z < 16; state->z++) {
 
             /* set up the render coordinates */
-            state.imgx = xoff + state.x * 12 + state.z * 12;
+            state->imgx = xoff + state->x * 12 + state->z * 12;
             /* 16*12 -- offset for y direction, 15*6 -- offset for x */
-            state.imgy = yoff - state.x * 6 + state.z * 6 + 16 * 12 + 15 * 6;
+            state->imgy = yoff - state->x * 6 + state->z * 6 + 16 * 12 + 15 * 6;
 
-            for (state.y = 0; state.y < 16; state.y++) {
+            for (state->y = 0; state->y < 16; state->y++) {
                 uint16_t ancilData;
 
-                state.imgy -= 12;
+                state->imgy -= 12;
                 /* get blockid */
-                state.block = getArrayShort3D(blocks_py, state.x, state.y, state.z);
-                if (state.block == block_air || render_mode_hidden(rendermode, state.x, state.y, state.z)) {
+                state->block = getArrayShort3D(blocks_py, state->x, state->y, state->z);
+                if (state->block == block_air || render_mode_hidden(rendermode, state->x, state->y, state->z)) {
                     continue;
                 }
 
                 /* make sure we're rendering inside the image boundaries */
-                if ((state.imgx >= imgsize0 + 24) || (state.imgx <= -24)) {
+                if ((state->imgx >= imgsize0 + 24) || (state->imgx <= -24)) {
                     continue;
                 }
-                if ((state.imgy >= imgsize1 + 24) || (state.imgy <= -24)) {
+                if ((state->imgy >= imgsize1 + 24) || (state->imgy <= -24)) {
                     continue;
                 }
 
                 /* check for occlusion */
-                if (render_mode_occluded(rendermode, state.x, state.y, state.z)) {
+                if (render_mode_occluded(rendermode, state->x, state->y, state->z)) {
                     continue;
                 }
 
                 /* everything stored here will be a borrowed ref */
 
-                if (block_has_property(state.block, NODATA)) {
+                if (block_has_property(state->block, NODATA)) {
                     /* block shouldn't have data associated with it, set it to 0 */
                     ancilData = 0;
-                    state.block_data = 0;
-                    state.block_pdata = 0;
+                    state->block_data = 0;
+                    state->block_pdata = 0;
                 } else {
                     /* block has associated data, use it */
-                    ancilData = getArrayByte3D(state.blockdatas, state.x, state.y, state.z);
-                    state.block_data = ancilData;
+                    ancilData = getArrayByte3D(state->blockdatas, state->x, state->y, state->z);
+                    state->block_data = ancilData;
                     /* block that need pseudo ancildata:
                      * grass, water, glass, chest, restone wire,
                      * ice, portal, iron bars,
                      * trapped chests, stairs */
-                    if (block_class_has(state.block, BLOCK_CLASS_ANCIL)) {
-                        ancilData = generate_pseudo_data(&state, ancilData);
-                        state.block_pdata = ancilData;
+                    if (block_class_has(state->block, BLOCK_CLASS_ANCIL)) {
+                        ancilData = generate_pseudo_data(state, ancilData);
+                        state->block_pdata = ancilData;
                     } else {
-                        state.block_pdata = 0;
+                        state->block_pdata = 0;
                     }
                 }
 
                 /* make sure our block info is in-bounds */
-                if (state.block >= max_blockid || ancilData >= max_data)
+                if (state->block >= max_blockid || ancilData >= max_data)
                     continue;
 
                 /* get the texture */
-                t = PyList_GET_ITEM(blockmap, max_data * state.block + ancilData);
+                t = PyList_GET_ITEM(blockmap, max_data * state->block + ancilData);
                 /* if we don't get a texture, try it again with 0 data */
                 if ((t == NULL || t == Py_None) && ancilData != 0)
-                    t = PyList_GET_ITEM(blockmap, max_data * state.block);
+                    t = PyList_GET_ITEM(blockmap, max_data * state->block);
 
                 /* if we found a proper texture, render it! */
                 if (t != NULL && t != Py_None) {
                     PyObject *src, *mask, *mask_light;
-                    int32_t do_rand = (state.block == block_tallgrass /*|| state.block == block_red_flower || state.block == block_double_plant*/);
+                    int32_t do_rand = (state->block == block_tallgrass /*|| state->block == block_red_flower || state->block == block_double_plant*/);
                     int32_t randx = 0, randy = 0;
                     src = PyTuple_GetItem(t, 0);
                     mask = PyTuple_GetItem(t, 0);
@@ -670,16 +789,16 @@ chunk_render(PyObject* self, PyObject* args) {
                         /* add a random offset to the postion of the tall grass to make it more wild */
                         randx = rand() % 6 + 1 - 3;
                         randy = rand() % 6 + 1 - 3;
-                        state.imgx += randx;
-                        state.imgy += randy;
+                        state->imgx += randx;
+                        state->imgy += randy;
                     }
 
                     render_mode_draw(rendermode, src, mask, mask_light);
 
                     if (do_rand) {
                         /* undo the random offsets */
-                        state.imgx -= randx;
-                        state.imgy -= randy;
+                        state->imgx -= randx;
+                        state->imgy -= randy;
                     }
                 }
             }
@@ -688,9 +807,108 @@ chunk_render(PyObject* self, PyObject* args) {
 
     /* free up the rendermode info */
     render_mode_destroy(rendermode);
+    unload_all_chunks(state);
+    return 0;
+}
 
+/* TODO triple check this to make sure reference counting is correct */
+PyObject*
+chunk_render(PyObject* self, PyObject* args) {
+    RenderState state;
+    PyObject* modeobj;
+    PyObject* blockmap;
+    int32_t xoff, yoff;
+    int32_t imgsize0, imgsize1;
+    int result;
+
+    if (!PyArg_ParseTuple(args, "OOiiiOiiOO", &state.world, &state.regionset, &state.chunkx, &state.chunky, &state.chunkz, &state.img, &xoff, &yoff, &modeobj, &state.textures))
+        return NULL;
+    state.chunk_cache = NULL;
+
+    /* get the blockmap from the textures object */
+    blockmap = get_blockmap(state.textures);
+    if (blockmap == NULL)
+        return NULL;
+
+    /* get the image size */
+    if (get_image_size(state.img, &imgsize0, &imgsize1) < 0) {
+        Py_DECREF(blockmap);
+        return NULL;
+    }
+
+    result = render_section(&state, modeobj, blockmap, imgsize0, imgsize1, xoff, yoff);
     Py_DECREF(blockmap);
-    unload_all_chunks(&state);
-
+    if (result < 0)
+        return NULL;
     Py_RETURN_NONE;
+}
+
+/* render_tile(world, regionset, sections, img, rendermode, textures,
+ *             ChunkDoesntExist, CorruptionError)
+ *
+ * Renders each (chunkx, chunky, chunkz, xoff, yoff) chunk section in the
+ * sections list, in order, as render_loop() would, but fetching each chunk
+ * column once for the whole list. Sections of missing chunks are skipped, as
+ * are those of corrupt chunks, whose (chunkx, chunkz) are returned in a list.
+ */
+PyObject*
+tile_render(PyObject* self, PyObject* args) {
+    RenderState state;
+    struct ChunkCache cache;
+    PyObject *modeobj, *sections, *missing_error, *corrupt_error;
+    PyObject* blockmap = NULL;
+    PyObject* corrupt = NULL;
+    int32_t imgsize0, imgsize1;
+    Py_ssize_t i;
+
+    if (!PyArg_ParseTuple(args, "OOO!OOOOO", &state.world, &state.regionset, &PyList_Type, &sections,
+                          &state.img, &modeobj, &state.textures, &missing_error, &corrupt_error))
+        return NULL;
+
+    if (!chunk_cache_init(&cache))
+        return PyErr_NoMemory();
+    state.chunk_cache = &cache;
+
+    blockmap = get_blockmap(state.textures);
+    if (blockmap == NULL || get_image_size(state.img, &imgsize0, &imgsize1) < 0)
+        goto error;
+    corrupt = PyList_New(0);
+    if (corrupt == NULL)
+        goto error;
+
+    for (i = 0; i < PyList_GET_SIZE(sections); i++) {
+        int32_t xoff, yoff;
+
+        if (!PyArg_ParseTuple(PyList_GET_ITEM(sections, i), "iiiii", &state.chunkx, &state.chunky,
+                              &state.chunkz, &xoff, &yoff))
+            goto error;
+
+        if (render_section(&state, modeobj, blockmap, imgsize0, imgsize1, xoff, yoff) < 0) {
+            if (PyErr_ExceptionMatches(corrupt_error)) {
+                PyObject* where;
+                PyErr_Clear();
+                where = Py_BuildValue("(ii)", state.chunkx, state.chunkz);
+                if (where == NULL || PyList_Append(corrupt, where) < 0) {
+                    Py_XDECREF(where);
+                    goto error;
+                }
+                Py_DECREF(where);
+            } else if (PyErr_ExceptionMatches(missing_error)) {
+                /* Some chunks are present on disk but not fully initialized */
+                PyErr_Clear();
+            } else {
+                goto error;
+            }
+        }
+    }
+
+    chunk_cache_free(&cache);
+    Py_DECREF(blockmap);
+    return corrupt;
+
+error:
+    chunk_cache_free(&cache);
+    Py_XDECREF(blockmap);
+    Py_XDECREF(corrupt);
+    return NULL;
 }

@@ -31,7 +31,7 @@
 
 // increment this value if you've made a change to the c extension
 // and want to force users to rebuild
-#define OVERVIEWER_EXTENSION_VERSION 126
+#define OVERVIEWER_EXTENSION_VERSION 127
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -101,6 +101,8 @@ typedef struct _RenderMode RenderMode;
 typedef struct {
     /* whether this chunk is loaded: use load_chunk to load */
     int32_t loaded;
+    /* whether the section arrays belong to a ChunkCache rather than this */
+    int32_t borrowed;
     /* all the sections in a given chunk */
     struct {
         /* all there is to know about each section */
@@ -135,11 +137,15 @@ typedef struct {
 
     /* 3x3 array of this and neighboring chunk columns */
     ChunkData chunks[3][3];
+
+    /* chunk columns already fetched for the current tile, or NULL */
+    struct ChunkCache* chunk_cache;
 } RenderState;
 PyObject* init_chunk_render(void);
 /* returns true on error, x,z relative */
 bool load_chunk(RenderState* state, int32_t x, int32_t z, uint8_t required);
 PyObject* chunk_render(PyObject* self, PyObject* args);
+PyObject* tile_render(PyObject* self, PyObject* args);
 typedef enum {
     KNOWN,
     TRANSPARENT,
