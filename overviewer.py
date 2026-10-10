@@ -112,6 +112,12 @@ def main():
                                   help="Only render tiles that come from chunks that have changed "
                                   "since the last render (the default).")
 
+    parser.add_argument("--png-compression", dest="pngcompression", type=int, choices=range(10),
+                        metavar="LEVEL",
+                        help="zlib compression level (0-9) for PNG tiles in every render, "
+                        "overriding the config file. Lower levels render faster and make "
+                        "larger tiles.")
+
     parser.add_argument("--estimate-dirty-tiles", dest="estimatedirtytiles", action="store_true",
                                   help="Only check which tiles will be re-rendered, but skip actually performing the"
                                        "render.")
@@ -439,6 +445,11 @@ def main():
                      "that need updating since last render.")
         set_renderchecks("notilechecks", 0)
 
+    if args.pngcompression is not None:
+        logging.info("Saving PNG tiles with compression level %d.", args.pngcompression)
+        for render in config['renders'].values():
+            render['pngcompression'] = args.pngcompression
+
     if not config['renders']:
         logging.error("You must specify at least one render in your config file. Check the "
                       "documentation at http://docs.overviewer.org if you're having trouble.")
@@ -625,7 +636,8 @@ def main():
         render['name'] = render_name    # perhaps a hack. This is stored here for the asset manager
         tileSetOpts = util.dict_subset(render, [
             "name", "imgformat", "renderchecks", "rerenderprob", "bgcolor", "defaultzoom",
-            "imgquality", "imglossless", "optimizeimg", "rendermode", "worldname_orig", "title",
+            "imgquality", "imglossless", "pngcompression", "optimizeimg", "rendermode",
+            "worldname_orig", "title",
             "dimension", "changelist", "showspawn", "overlay", "base", "poititle", "maxzoom",
             "showlocationmarker", "minzoom", "center"])
         tileSetOpts.update({"spawn": w.find_true_spawn(render['dimension'])})

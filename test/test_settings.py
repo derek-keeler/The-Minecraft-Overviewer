@@ -2,7 +2,7 @@ import unittest
 from collections import OrderedDict
 
 from overviewer_core import config_parser
-from overviewer_core.settingsValidators import ValidationException
+from overviewer_core.settingsValidators import ValidationException, validatePNGCompression
 
 from overviewer_core import world
 from overviewer_core import rendermodes
@@ -30,6 +30,20 @@ class SettingsTest(unittest.TestCase):
 
         self.assertEqual(things['renders']['myworld']['northdirection'],
                world.UPPER_LEFT) 
+
+    def test_png_compression(self):
+        self.s.parse("test/data/settings/settings_test_1.py")
+        self.assertEqual(self.s.get_validated_config()['renders']['myworld']['pngcompression'], 6)
+
+        # a top-level setting is the default for every render
+        s = config_parser.MultiWorldParser()
+        s.parse("test/data/settings/settings_test_pngcompression.py")
+        renders = s.get_validated_config()['renders']
+        self.assertEqual(renders['fast']['pngcompression'], 3)
+        self.assertEqual(renders['small']['pngcompression'], 9)
+
+        for level in (-1, 10):
+            self.assertRaises(ValidationException, validatePNGCompression, level)
 
     def test_rendermode_validation(self):
         self.s.parse("test/data/settings/settings_test_rendermode.py")

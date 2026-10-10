@@ -4,6 +4,7 @@ import shutil
 from collections import defaultdict
 import os
 import os.path
+import io
 import random
 
 from overviewer_core import cache, tileset, world
@@ -378,3 +379,16 @@ class TilesetTest(unittest.TestCase):
             tiles = list(zip(cols.tolist(), rows.tolist()))
             self.assertEqual(len(tiles), len(set(tiles)))
             self.assertEqual(set(tiles), expected)
+
+
+class PNGCompressionTest(unittest.TestCase):
+    def test_default_level_is_pillows_default(self):
+        """Tiles are saved with pngcompression 6 by default, which writes the
+        same file as Pillow's own default."""
+        from PIL import Image
+        r = random.Random(4)
+        img = Image.frombytes("RGBA", (96, 96), bytes(r.randrange(256) for _ in range(96 * 96 * 4)))
+        default, level6 = io.BytesIO(), io.BytesIO()
+        img.save(default, "png")
+        img.save(level6, "png", compress_level=6)
+        self.assertEqual(default.getvalue(), level6.getvalue())

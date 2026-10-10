@@ -731,6 +731,19 @@ Image options
 
     **Default:** ``True``
 
+``pngcompression``
+    The zlib compression level used when saving tiles in the PNG format, an
+    integer from 0 (no compression) to 9 (smallest files). Compressing tiles
+    is a large part of the render time: lower levels render faster and make
+    larger tiles, higher levels the reverse. The images themselves are the
+    same at every level. Has no effect on other image formats.
+
+    Like other render options, it can be set for all renders at once at the
+    top of the config file, and :option:`--png-compression` overrides it for
+    every render.
+
+    **Default:** ``6``
+
 ``optimizeimg``
 
     .. warning::

@@ -75,6 +75,7 @@ def get_default_config():
                 "imgformat": Setting(required=True, validator=validateImgFormat, default="png"),
                 "imgquality": Setting(required=False, validator=validateImgQuality, default=95),
                 "imglossless": Setting(required=False, validator=validateBool, default=True),
+                "pngcompression": Setting(required=True, validator=validatePNGCompression, default=6),
                 "bgcolor": Setting(required=True, validator=validateBGColor, default="1a1a1a"),
                 "defaultzoom": Setting(required=True, validator=validateDefaultZoom, default=1),
                 "optimizeimg": Setting(required=True, validator=validateOptImg, default=[]),

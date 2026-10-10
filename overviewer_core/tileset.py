@@ -285,6 +285,9 @@ class TileSet(object):
         imglossless
             A boolean indicating whether to save a webp image in lossless mode.
 
+        pngcompression
+            The zlib compression level, 0-9, for png output.
+
         optimizeimg
             A list of optimizer instances to use.
 
@@ -1132,7 +1135,7 @@ class TileSet(object):
                 img.convert('RGB').save(tmppath, "jpeg", quality=self.options['imgquality'],
                                         subsampling=0)
             elif imgformat == 'png':   # PNG
-                img.save(tmppath, "png")
+                img.save(tmppath, "png", compress_level=self.options['pngcompression'])
             elif imgformat == 'webp':
                 img.save(tmppath, "webp", quality=self.options['imgquality'],
                          lossless=self.options['imglossless'])
@@ -1236,7 +1239,7 @@ class TileSet(object):
                 tileimg.convert('RGB').save(tmppath, "jpeg", quality=self.options['imgquality'],
                                             subsampling=0)
             elif self.imgextension == 'png':   # PNG
-                tileimg.save(tmppath, "png")
+                tileimg.save(tmppath, "png", compress_level=self.options['pngcompression'])
             elif self.imgextension == 'webp':
                 tileimg.save(tmppath, "webp", quality=self.options['imgquality'],
                          lossless=self.options['imglossless'])

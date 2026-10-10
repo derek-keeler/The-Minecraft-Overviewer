@@ -169,6 +169,13 @@ typically correct.
     :option:`--check-tiles` is in effect.  This option conflicts with
     :option:`--forcerender` and :option:`--check-tiles`.
 
+.. cmdoption:: --png-compression <level>
+
+    Saves the PNG tiles of every render with the given zlib compression level,
+    from 0 (no compression) to 9 (smallest files), instead of the
+    ``pngcompression`` setting in the config file. Lower levels render faster
+    and make larger tiles.
+
 .. cmdoption:: --check-tiles
 
     Forces The Overviewer to check each tile on disk and check to make sure it

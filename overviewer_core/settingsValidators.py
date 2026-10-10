@@ -155,6 +155,14 @@ def validateImgQuality(qual):
     return intqual
 
 
+def validatePNGCompression(level):
+    intlevel = int(level)
+    if intlevel < 0 or intlevel > 9:
+        raise ValidationException("%r is not a valid PNG compression level; it must be "
+                                  "between 0 and 9." % intlevel)
+    return intlevel
+
+
 def validateBGColor(color):
     """BG color must be an HTML color, with an option leading # (hash symbol)
     returns an (r,b,g) 3-tuple
