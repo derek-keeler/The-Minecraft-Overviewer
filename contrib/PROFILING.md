@@ -130,3 +130,4 @@ Expect a few percent of noise between runs.
 | Baseline | *pending* | *pending* | — | *pending* | — | *pending* |
 | Faster chunk parsing | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Texture generation | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
+| Chunk reuse within a render | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
