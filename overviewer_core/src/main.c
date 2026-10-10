@@ -29,6 +29,9 @@ static PyMethodDef COverviewerMethods[] = {
     {"resize_half", resize_half_wrap, METH_VARARGS,
      "downscale image to half size"},
 
+    {"_tint_with_mask", tint_with_mask_wrap, METH_VARARGS,
+     "multiply an image by a colour within a mask (for tests)"},
+
     {"render_loop", chunk_render, METH_VARARGS,
      "Renders stuffs"},
 

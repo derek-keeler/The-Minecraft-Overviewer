@@ -36,6 +36,26 @@ def reference_alpha_over(dest, src, pos, mask):
                 out[dx + x, dy + y] = tuple(blended) + (alpha,)
 
 
+def reference_tint_with_mask(dest, colour, mask, pos):
+    """The C tint, one pixel at a time, for masks placed fully inside dest."""
+    out = dest.load()
+    alphas = mask.load()
+    dx, dy = pos
+    for y in range(mask.size[1]):
+        for x in range(mask.size[0]):
+            m = alphas[x, y]
+            if mask.mode == "RGBA":
+                m = m[3]
+            if m == 0:
+                continue
+            pixel = out[dx + x, dy + y]
+            if m == 255:
+                out[dx + x, dy + y] = tuple(muldiv255(p, c) for p, c in zip(pixel, colour))
+            else:
+                out[dx + x, dy + y] = tuple(muldiv255(p, (255 - m) + muldiv255(c, m))
+                                            for p, c in zip(pixel, colour))
+
+
 class AlphaOverTests(unittest.TestCase):
     def random_image(self, rng, mode, size):
         def alpha():
@@ -91,3 +111,42 @@ class AlphaOverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TintWithMaskTests(unittest.TestCase):
+    random_image = AlphaOverTests.random_image
+
+    def test_matches_reference_tint(self):
+        rng = random.Random(27)
+        colours = [(255, 255, 255, 0), (255, 255, 255, 255), (255, 255, 255, 128)]
+        for case in range(300):
+            if rng.random() < 0.5:
+                colour = rng.choice(colours)
+            else:
+                # lighting and biome tints keep alpha; some leave channels at 255
+                colour = tuple(rng.choice([255, rng.randrange(256)]) for _ in range(3))
+                colour += (rng.choice([255, rng.randrange(256)]),)
+            size = (rng.randrange(1, 30), rng.randrange(1, 30))
+            dest = self.random_image(rng, "RGBA", (32, 32))
+            mask = self.random_image(rng, rng.choice(["RGBA", "L"]), size)
+            pos = (rng.randrange(0, 33 - size[0]), rng.randrange(0, 33 - size[1]))
+
+            expected = dest.copy()
+            reference_tint_with_mask(expected, colour, mask, pos)
+            c_overviewer._tint_with_mask(dest, colour, mask, pos)
+            self.assertEqual(dest.tobytes(), expected.tobytes(),
+                             "case %d: colour %r, mask %s %r at %r" % (case, colour, mask.mode, size, pos))
+
+    def test_clips_to_destination(self):
+        rng = random.Random(28)
+        for pos in [(-5, -5), (20, 20), (-30, 0), (31, 31)]:
+            dest = self.random_image(rng, "RGBA", (32, 32))
+            mask = self.random_image(rng, "RGBA", (24, 24))
+            expected = dest.copy()
+            # the reference on a large canvas, cropped back to dest
+            canvas = Image.new("RGBA", (96, 96))
+            canvas.paste(dest, (32, 32))
+            reference_tint_with_mask(canvas, (255, 255, 255, 0), mask, (pos[0] + 32, pos[1] + 32))
+            expected = canvas.crop((32, 32, 64, 64))
+            c_overviewer._tint_with_mask(dest, (255, 255, 255, 0), mask, pos)
+            self.assertEqual(dest.tobytes(), expected.tobytes(), "at %r" % (pos,))

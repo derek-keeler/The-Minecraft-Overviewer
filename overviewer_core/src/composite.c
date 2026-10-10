@@ -342,6 +342,76 @@ alpha_over_wrap(PyObject* self, PyObject* args) {
     return ret;
 }
 
+/* tints one pixel for tint_with_mask(), for a mask value m that isn't 0 */
+static inline void
+tint_pixel(UINT8* out, UINT8 m, uint8_t sr, uint8_t sg, uint8_t sb, uint8_t sa,
+           const bool tint_rgb, const bool tint_alpha) {
+    int32_t tmp1, tmp2;
+
+    if (m == 255) {
+        if (tint_rgb) {
+            out[0] = OV_MULDIV255(out[0], sr, tmp1);
+            out[1] = OV_MULDIV255(out[1], sg, tmp1);
+            out[2] = OV_MULDIV255(out[2], sb, tmp1);
+        }
+        if (tint_alpha)
+            out[3] = OV_MULDIV255(out[3], sa, tmp1);
+    } else {
+        /* general case */
+        if (tint_rgb) {
+            out[0] = OV_MULDIV255(out[0], (255 - m) + OV_MULDIV255(sr, m, tmp1), tmp2);
+            out[1] = OV_MULDIV255(out[1], (255 - m) + OV_MULDIV255(sg, m, tmp1), tmp2);
+            out[2] = OV_MULDIV255(out[2], (255 - m) + OV_MULDIV255(sb, m, tmp1), tmp2);
+        }
+        if (tint_alpha)
+            out[3] = OV_MULDIV255(out[3], (255 - m) + OV_MULDIV255(sa, m, tmp1), tmp2);
+    }
+}
+
+/* tints one row of pixels for tint_with_mask(). tint_rgb and tint_alpha are
+ * constants at each call (and so is sa where it is 0), so the compiler builds
+ * a separate loop for each case without the per-pixel tests; clearing alpha
+ * under a fully opaque mask becomes a plain store of 0.
+ */
+static inline void
+tint_row(UINT8* out, const UINT8* inmask, int32_t mask_stride, int32_t xsize,
+         uint8_t sr, uint8_t sg, uint8_t sb, uint8_t sa,
+         const bool tint_rgb, const bool tint_alpha) {
+    int32_t x = 0;
+
+    /* most of a face or block mask is runs of fully transparent or fully
+       opaque pixels, so look at four mask pixels at a time */
+    for (; x + 4 <= xsize; x += 4, out += 16, inmask += 4 * mask_stride) {
+        UINT8 m0 = inmask[0];
+        UINT8 m1 = inmask[mask_stride];
+        UINT8 m2 = inmask[2 * mask_stride];
+        UINT8 m3 = inmask[3 * mask_stride];
+
+        if ((m0 | m1 | m2 | m3) == 0)
+            continue;
+        if ((m0 & m1 & m2 & m3) == 255) {
+            tint_pixel(out, 255, sr, sg, sb, sa, tint_rgb, tint_alpha);
+            tint_pixel(out + 4, 255, sr, sg, sb, sa, tint_rgb, tint_alpha);
+            tint_pixel(out + 8, 255, sr, sg, sb, sa, tint_rgb, tint_alpha);
+            tint_pixel(out + 12, 255, sr, sg, sb, sa, tint_rgb, tint_alpha);
+            continue;
+        }
+        if (m0)
+            tint_pixel(out, m0, sr, sg, sb, sa, tint_rgb, tint_alpha);
+        if (m1)
+            tint_pixel(out + 4, m1, sr, sg, sb, sa, tint_rgb, tint_alpha);
+        if (m2)
+            tint_pixel(out + 8, m2, sr, sg, sb, sa, tint_rgb, tint_alpha);
+        if (m3)
+            tint_pixel(out + 12, m3, sr, sg, sb, sa, tint_rgb, tint_alpha);
+    }
+
+    for (; x < xsize; x++, out += 4, inmask += mask_stride) {
+        if (*inmask)
+            tint_pixel(out, *inmask, sr, sg, sb, sa, tint_rgb, tint_alpha);
+    }
+}
+
 /* like alpha_over, but instead of src image it takes a source color
  * also, it multiplies instead of doing an over operation
  */
@@ -358,9 +428,12 @@ tint_with_mask(PyObject* dest,
     /* source position */
     int32_t sx, sy;
     /* iteration variables */
-    int32_t x, y;
-    /* temporary calculation variables */
-    int32_t tmp1, tmp2;
+    int32_t y;
+    /* Multiplying by 255 leaves a channel unchanged, whatever the mask: the
+       factor (255 - m) + m is 255. Callers clearing alpha pass 255 for the
+       colour, and colour tints pass 255 for alpha. */
+    bool tint_rgb = (sr != 255 || sg != 255 || sb != 255);
+    bool tint_alpha = (sa != 255);
 
     if (!(imDest = imaging_python_to_c(dest)) ||
         !(imMask = imaging_python_to_c(mask)))
@@ -388,7 +461,7 @@ tint_with_mask(PyObject* dest,
     setup_source_destination(imMask, imDest, &sx, &sy, &dx, &dy, &xsize, &ysize);
 
     /* check that there remains any blending to be done */
-    if (xsize <= 0 || ysize <= 0) {
+    if (xsize <= 0 || ysize <= 0 || (!tint_rgb && !tint_alpha)) {
         /* nothing to do, return */
         return dest;
     }
@@ -397,39 +470,36 @@ tint_with_mask(PyObject* dest,
         UINT8* out = (UINT8*)imDest->image[dy + y] + dx * 4;
         UINT8* inmask = (UINT8*)imMask->image[sy + y] + sx * mask_stride + mask_offset;
 
-        for (x = 0; x < xsize; x++) {
-            /* special cases */
-            if (*inmask == 255) {
-                *out = OV_MULDIV255(*out, sr, tmp1);
-                out++;
-                *out = OV_MULDIV255(*out, sg, tmp1);
-                out++;
-                *out = OV_MULDIV255(*out, sb, tmp1);
-                out++;
-                *out = OV_MULDIV255(*out, sa, tmp1);
-                out++;
-            } else if (*inmask == 0) {
-                /* do nothing -- source is fully transparent */
-                out += 4;
-            } else {
-                /* general case */
-
-                /* TODO work out general case */
-                *out = OV_MULDIV255(*out, (255 - *inmask) + OV_MULDIV255(sr, *inmask, tmp1), tmp2);
-                out++;
-                *out = OV_MULDIV255(*out, (255 - *inmask) + OV_MULDIV255(sg, *inmask, tmp1), tmp2);
-                out++;
-                *out = OV_MULDIV255(*out, (255 - *inmask) + OV_MULDIV255(sb, *inmask, tmp1), tmp2);
-                out++;
-                *out = OV_MULDIV255(*out, (255 - *inmask) + OV_MULDIV255(sa, *inmask, tmp1), tmp2);
-                out++;
-            }
-
-            inmask += mask_stride;
-        }
+        if (tint_rgb && tint_alpha)
+            tint_row(out, inmask, mask_stride, xsize, sr, sg, sb, sa, true, true);
+        else if (tint_rgb)
+            tint_row(out, inmask, mask_stride, xsize, sr, sg, sb, sa, true, false);
+        else if (sa == 0)
+            /* clearing alpha (clear-base) */
+            tint_row(out, inmask, mask_stride, xsize, 255, 255, 255, 0, false, true);
+        else
+            tint_row(out, inmask, mask_stride, xsize, sr, sg, sb, sa, false, true);
     }
 
     return dest;
+}
+
+/* tint_with_mask(dest, (r, g, b, a), mask, (dx, dy)), for tests */
+PyObject*
+tint_with_mask_wrap(PyObject* self, PyObject* args) {
+    PyObject *dest, *mask;
+    int32_t sr, sg, sb, sa, dx, dy;
+    PyObject* ret;
+
+    if (!PyArg_ParseTuple(args, "O(iiii)O(ii)", &dest, &sr, &sg, &sb, &sa, &mask, &dx, &dy))
+        return NULL;
+
+    ret = tint_with_mask(dest, sr, sg, sb, sa, mask, dx, dy, 0, 0);
+    if (ret == dest) {
+        /* Python needs us to own our return value */
+        Py_INCREF(dest);
+    }
+    return ret;
 }
 
 /* draws a triangle on the destination image, multiplicatively!
