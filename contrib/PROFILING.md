@@ -134,3 +134,4 @@ Expect a few percent of noise between runs.
 | Native render loop | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Batching across renders | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Startup | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
+| Native render loop, round 2 | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
