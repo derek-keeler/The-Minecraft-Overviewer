@@ -188,8 +188,12 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
     int32_t x, y;
     /* temporary calculation variable */
     int32_t tmp1;
-    /* whether the four-pixel fast path applies */
-    int32_t fast_runs;
+    /* whether the four-pixel fast path applies, and whether its mask is
+       the source image itself */
+    int32_t fast_runs, mask_is_src;
+    /* the alpha bytes of two RGBA pixels, in a 64-bit word of either byte order */
+    static const UINT8 alpha_pattern[8] = {0, 0, 0, 255, 0, 0, 0, 255};
+    uint64_t alpha_bits;
     /* integer [0, 255] version of overall_alpha */
     UINT8 overall_alpha_int = 255 * overall_alpha;
 
@@ -248,6 +252,9 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
     /* runs of four fully opaque or fully transparent pixels are handled
        without the per-pixel blend; that covers most of a block texture */
     fast_runs = (overall_alpha_int == 255 && src_has_alpha && imSrc != imDest);
+    /* block textures are their own mask, so the alphas come with the pixels */
+    mask_is_src = (fast_runs && imMask == imSrc);
+    memcpy(&alpha_bits, alpha_pattern, 8);
 
     for (y = 0; y < ysize; y++) {
         UINT8* out = (UINT8*)imDest->image[dy + y] + dx * 4;
@@ -255,7 +262,27 @@ alpha_over_full(PyObject* dest, PyObject* src, PyObject* mask, float overall_alp
         UINT8* inmask = (UINT8*)imMask->image[sy + y] + sx * mask_stride + mask_offset;
 
         x = 0;
-        if (fast_runs) {
+        if (mask_is_src) {
+            for (; x + 4 <= xsize; x += 4) {
+                uint64_t w0, w1;
+
+                memcpy(&w0, in, 8);
+                memcpy(&w1, in + 8, 8);
+                if ((w0 & alpha_bits) == alpha_bits && (w1 & alpha_bits) == alpha_bits) {
+                    /* all four opaque, and the copy brings their alpha of 255 */
+                    memcpy(out, in, 16);
+                } else if (((w0 | w1) & alpha_bits) != 0) {
+                    blend_pixel(out, in, in[3]);
+                    blend_pixel(out + 4, in + 4, in[7]);
+                    blend_pixel(out + 8, in + 8, in[11]);
+                    blend_pixel(out + 12, in + 12, in[15]);
+                }
+
+                out += 16;
+                in += 16;
+            }
+            inmask += x * mask_stride;
+        } else if (fast_runs) {
             for (; x + 4 <= xsize; x += 4) {
                 UINT8 a0 = inmask[0];
                 UINT8 a1 = inmask[mask_stride];
