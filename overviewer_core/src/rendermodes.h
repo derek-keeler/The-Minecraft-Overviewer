@@ -89,13 +89,39 @@ struct _RenderMode {
     uint32_t num_primitives;
     RenderPrimitive** primitives;
     RenderState* state;
+    /* the primitives that have an occluded or hidden function, in order;
+       most rendermodes have no hidden ones */
+    uint32_t num_occluding, num_hiding;
+    RenderPrimitive** occluding;
+    RenderPrimitive** hiding;
 };
 
 /* functions for creating / using rendermodes */
 RenderMode* render_mode_create(PyObject* mode, RenderState* state);
 void render_mode_destroy(RenderMode* self);
-bool render_mode_occluded(RenderMode* self, int32_t x, int32_t y, int32_t z);
-bool render_mode_hidden(RenderMode* self, int32_t x, int32_t y, int32_t z);
+
+/* these are called for every block (and its neighbours), so they are
+   inline and only visit the primitives that implement them */
+static inline bool render_mode_occluded(RenderMode* self, int32_t x, int32_t y, int32_t z) {
+    uint32_t i;
+    for (i = 0; i < self->num_occluding; i++) {
+        RenderPrimitive* prim = self->occluding[i];
+        if (prim->iface->occluded(prim->primitive, self->state, x, y, z))
+            return true;
+    }
+    return false;
+}
+
+static inline bool render_mode_hidden(RenderMode* self, int32_t x, int32_t y, int32_t z) {
+    uint32_t i;
+    for (i = 0; i < self->num_hiding; i++) {
+        RenderPrimitive* prim = self->hiding[i];
+        if (prim->iface->hidden(prim->primitive, self->state, x, y, z))
+            return true;
+    }
+    return false;
+}
+
 void render_mode_draw(RenderMode* self, PyObject* img, PyObject* mask, PyObject* mask_light);
 
 /* helper function for reading in rendermode options

@@ -105,6 +105,16 @@ RenderMode* render_mode_create(PyObject* mode, RenderState* state) {
         ret->primitives[i] = prim;
     }
 
+    ret->occluding = calloc(ret->num_primitives, sizeof(RenderPrimitive*));
+    ret->hiding = calloc(ret->num_primitives, sizeof(RenderPrimitive*));
+    for (i = 0; i < ret->num_primitives; i++) {
+        RenderPrimitive* prim = ret->primitives[i];
+        if (prim->iface->occluded)
+            ret->occluding[ret->num_occluding++] = prim;
+        if (prim->iface->hidden)
+            ret->hiding[ret->num_hiding++] = prim;
+    }
+
     return ret;
 }
 
@@ -126,37 +136,9 @@ void render_mode_destroy(RenderMode* self) {
         }
     }
     free(self->primitives);
+    free(self->occluding);
+    free(self->hiding);
     free(self);
-}
-
-bool render_mode_occluded(RenderMode* self, int32_t x, int32_t y, int32_t z) {
-    uint32_t i;
-    bool occluded = false;
-    for (i = 0; i < self->num_primitives; i++) {
-        RenderPrimitive* prim = self->primitives[i];
-        if (prim->iface->occluded) {
-            occluded |= prim->iface->occluded(prim->primitive, self->state, x, y, z);
-        }
-
-        if (occluded)
-            return occluded;
-    }
-    return occluded;
-}
-
-bool render_mode_hidden(RenderMode* self, int32_t x, int32_t y, int32_t z) {
-    uint32_t i;
-    bool hidden = false;
-    for (i = 0; i < self->num_primitives; i++) {
-        RenderPrimitive* prim = self->primitives[i];
-        if (prim->iface->hidden) {
-            hidden |= prim->iface->hidden(prim->primitive, self->state, x, y, z);
-        }
-
-        if (hidden)
-            return hidden;
-    }
-    return hidden;
 }
 
 void render_mode_draw(RenderMode* self, PyObject* img, PyObject* mask, PyObject* mask_light) {

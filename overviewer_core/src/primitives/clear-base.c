@@ -19,13 +19,14 @@
 
 static bool
 clear_base_occluded(void* data, RenderState* state, int32_t x, int32_t y, int32_t z) {
+    /* the cheap tests first */
     if ((x != 0) && (y != 15) && (z != 127) &&
-        !render_mode_hidden(state->rendermode, x - 1, y, z) &&
-        !render_mode_hidden(state->rendermode, x, y, z + 1) &&
-        !render_mode_hidden(state->rendermode, x, y + 1, z) &&
         !is_transparent(getArrayShort3D(state->blocks, x - 1, y, z)) &&
         !is_transparent(getArrayShort3D(state->blocks, x, y, z + 1)) &&
-        !is_transparent(getArrayShort3D(state->blocks, x, y + 1, z))) {
+        !is_transparent(getArrayShort3D(state->blocks, x, y + 1, z)) &&
+        !render_mode_hidden(state->rendermode, x - 1, y, z) &&
+        !render_mode_hidden(state->rendermode, x, y, z + 1) &&
+        !render_mode_hidden(state->rendermode, x, y + 1, z)) {
         return true;
     }
 
