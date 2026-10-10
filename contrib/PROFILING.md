@@ -135,3 +135,9 @@ Expect a few percent of noise between runs.
 | Batching across renders | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Startup | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
 | Native render loop, round 2 | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
+| PNG compression level 3 (opt-in) | *pending* | *pending* | *pending* | *pending* | *pending* | *pending* |
+
+The PNG compression row is measured with `pngcompression = 3` added to the
+seven-render config, or `--png-compression 3` for the full world render. At
+the default level, 6, tiles are byte-for-byte the same as before; level 3
+trades larger tiles for speed.
